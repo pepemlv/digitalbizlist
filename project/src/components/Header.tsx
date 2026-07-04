@@ -44,7 +44,7 @@ export default function Header({ onNavigate }: Props) {
             post an ad
           </button>
           <button onClick={handleDashboardClick} className="text-[#00519b] text-xs hover:underline whitespace-nowrap">
-            My dashaboard
+            My dashboard
           </button>
         </nav>
       </div>
