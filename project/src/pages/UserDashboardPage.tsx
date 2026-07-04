@@ -189,6 +189,7 @@ export default function UserDashboardPage({ onNavigate }: Props) {
     }
 
     setPlanMessage('');
+    setActiveSection('plans');
     setSelectedPaymentPlan(planId);
   };
 
@@ -653,7 +654,7 @@ export default function UserDashboardPage({ onNavigate }: Props) {
           </button>
         </div>
 
-        <div className="border border-[#00519b] bg-blue-50 p-4">
+        <div className={`border p-4 ${selectedPaymentPlan === 'starter' ? 'border-[#00519b] bg-blue-50 ring-2 ring-blue-200' : 'border-[#00519b] bg-blue-50'}`}>
           <p className="text-sm font-semibold text-[#00519b]">Starter Plan</p>
           <h3 className="mt-1 text-2xl font-semibold text-gray-900">$5</h3>
           <p className="mt-1 text-sm text-gray-600">Great for small businesses.</p>
@@ -673,7 +674,7 @@ export default function UserDashboardPage({ onNavigate }: Props) {
           </button>
         </div>
 
-        <div className="border border-gray-900 bg-white p-4">
+        <div className={`border bg-white p-4 ${selectedPaymentPlan === 'business' ? 'border-gray-900 ring-2 ring-gray-300' : 'border-gray-900'}`}>
           <p className="text-sm font-semibold text-gray-900">Business Plan</p>
           <h3 className="mt-1 text-2xl font-semibold text-gray-900">$10</h3>
           <p className="mt-1 text-sm text-gray-600">Best for businesses posting often.</p>
