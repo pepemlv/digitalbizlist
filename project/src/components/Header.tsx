@@ -1,12 +1,4 @@
-import { useEffect, useState } from 'react';
-
 const USER_PROFILE_STORAGE_KEY = 'digitalbizlist-user-profile';
-
-type StoredUserProfile = {
-  email: string;
-  phone: string;
-  password: string;
-};
 
 type Page = 'home' | 'browse' | 'post' | 'listing' | 'user' | 'login';
 
@@ -15,36 +7,21 @@ type Props = {
 };
 
 export default function Header({ onNavigate }: Props) {
-  const [currentUser, setCurrentUser] = useState<StoredUserProfile | null>(null);
-
-  const syncCurrentUser = () => {
+  const hasCurrentUser = () => {
     const rawProfile = window.localStorage.getItem(USER_PROFILE_STORAGE_KEY);
-    if (!rawProfile) {
-      setCurrentUser(null);
-      return;
-    }
+    if (!rawProfile) return false;
 
     try {
-      setCurrentUser(JSON.parse(rawProfile) as StoredUserProfile);
+      JSON.parse(rawProfile);
+      return true;
     } catch {
-      setCurrentUser(null);
+      return false;
     }
   };
 
   const handleDashboardClick = () => {
-    onNavigate(currentUser ? 'user' : 'login');
+    onNavigate(hasCurrentUser() ? 'user' : 'login');
   };
-
-  useEffect(() => {
-    syncCurrentUser();
-
-    const handleProfileChange = () => {
-      syncCurrentUser();
-    };
-
-    window.addEventListener('user-profile-changed', handleProfileChange);
-    return () => window.removeEventListener('user-profile-changed', handleProfileChange);
-  }, []);
 
   return (
     <div className="border-b border-gray-300 bg-white">

@@ -707,7 +707,10 @@ export async function createPlanPaymentIntent(planId: Exclude<PricingPlanId, 'fr
     throw new Error('Stripe payment intent was not created.');
   }
 
-  return data;
+  return {
+    clientSecret: data.clientSecret,
+    paymentIntentId: data.paymentIntentId,
+  };
 }
 
 export async function confirmPlanPayment(paymentIntentId: string) {

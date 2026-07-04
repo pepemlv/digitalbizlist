@@ -132,6 +132,8 @@ export default function PostAdPage({ onNavigate }: Props) {
   const [selectedPaymentPlan, setSelectedPaymentPlan] = useState<'starter' | 'business' | null>(null);
   const [currentUser, setCurrentUser] = useState<StoredUserProfile | null>(null);
   const [discoveredAccount, setDiscoveredAccount] = useState<StoredUserProfile | null>(null);
+  const [accountLookupLoading, setAccountLookupLoading] = useState(false);
+  const [accountLookupPending, setAccountLookupPending] = useState(false);
   const [cityGroups, setCityGroups] = useState<CityGroup[]>([]);
   const [planSettings, setPlanSettings] = useState(pricingPlans);
 
@@ -140,6 +142,10 @@ export default function PostAdPage({ onNavigate }: Props) {
 
   const update = (field: keyof FormData, value: string) => {
     setForm(prev => ({ ...prev, [field]: value }));
+    if (field === 'contact_email') {
+      setAccountPassword('');
+      setConfirmPassword('');
+    }
     setError('');
   };
 
@@ -195,6 +201,8 @@ export default function PostAdPage({ onNavigate }: Props) {
   const persistCurrentUser = (profile: { email: string; phone: string; password: string }) => {
     window.localStorage.setItem(USER_PROFILE_STORAGE_KEY, JSON.stringify(profile));
     upsertStoredAccount(profile);
+    setCurrentUser(profile);
+    window.dispatchEvent(new Event('user-profile-changed'));
   };
 
   const contactEmail = form.contact_email.trim().toLowerCase();
@@ -203,15 +211,21 @@ export default function PostAdPage({ onNavigate }: Props) {
       || (currentUser?.email.toLowerCase() === contactEmail ? currentUser : null)
       || (discoveredAccount?.email.toLowerCase() === contactEmail ? discoveredAccount : null)
     : null;
-
   const isLoggedInUser = Boolean(currentUser);
+  const isNewContactEmail = Boolean(contactEmail && !accountLookupLoading && !matchingAccount && !isLoggedInUser);
+  const isCheckingAccount = accountLookupPending || accountLookupLoading;
+  const passwordMismatch = Boolean(
+    !isLoggedInUser
+      && matchingAccount
+      && accountPassword.trim()
+      && matchingAccount.password !== accountPassword.trim()
+  );
 
-  const getOwnerListings = async (email: string, phone: string, password: string) => {
+  const getOwnerListings = async (email: string) => {
     const listings = await getListings({ approvedOnly: false, sortBy: 'newest' });
     return listings.filter((item) => {
       const listingEmail = (item.posted_by_email || item.contact_email || '').toLowerCase();
-      const listingPhone = item.posted_by_phone || item.contact_phone || '';
-      return listingEmail === email || listingPhone === phone || item.posting_password === password;
+      return listingEmail === email;
     });
   };
 
@@ -305,17 +319,27 @@ export default function PostAdPage({ onNavigate }: Props) {
     const email = form.contact_email.trim().toLowerCase();
     if (!email) {
       setDiscoveredAccount(null);
+      setAccountLookupLoading(false);
+      setAccountLookupPending(false);
       return;
     }
 
     const localAccount = getStoredAccounts().find((user) => user.email.toLowerCase() === email);
     if (localAccount || currentUser?.email.toLowerCase() === email) {
       setDiscoveredAccount(null);
+      setAccountLookupLoading(false);
+      setAccountLookupPending(false);
       return;
     }
 
     let cancelled = false;
+    setAccountLookupPending(true);
+    setAccountLookupLoading(false);
+    setDiscoveredAccount(null);
+
     const findExistingPostingAccount = async () => {
+      setAccountLookupPending(false);
+      setAccountLookupLoading(true);
       const listings = await getListings({ approvedOnly: false, sortBy: 'newest' });
       if (cancelled) return;
 
@@ -329,11 +353,16 @@ export default function PostAdPage({ onNavigate }: Props) {
         phone: matchingListing.posted_by_phone || matchingListing.contact_phone || '',
         password: matchingListing.posting_password || '',
       } : null);
+      setAccountLookupLoading(false);
     };
 
-    void findExistingPostingAccount();
+    const lookupTimer = window.setTimeout(() => {
+      void findExistingPostingAccount();
+    }, 2000);
+
     return () => {
       cancelled = true;
+      window.clearTimeout(lookupTimer);
     };
   }, [form.contact_email, currentUser]);
 
@@ -450,15 +479,15 @@ export default function PostAdPage({ onNavigate }: Props) {
 
   const handleSubmit = async () => {
     const email = form.contact_email.trim().toLowerCase();
-    const phone = form.contact_phone.trim();
+    const inputPhone = form.contact_phone.trim();
 
     if (!email) {
       setError('Please enter your email address for the account and reply contact.');
       return;
     }
 
-    if (!phone) {
-      setError('Please enter your phone number.');
+    if (isCheckingAccount) {
+      setError('Checking account. Please wait a moment.');
       return;
     }
 
@@ -481,10 +510,15 @@ export default function PostAdPage({ onNavigate }: Props) {
       }
 
       if (existingAccount.password !== password) {
-        setError('The password you entered does not match this account.');
+        setError('Password incorrect.');
         return;
       }
     } else {
+      if (!inputPhone) {
+        setError('This email does not exist. Create account to post.');
+        return;
+      }
+
       if (!password || !confirmationPassword) {
         setError('Please create a password and confirm it.');
         return;
@@ -501,25 +535,29 @@ export default function PostAdPage({ onNavigate }: Props) {
     try {
       const [plan, ownerListings] = await Promise.all([
         getUserPlan(email),
-        getOwnerListings(email, phone, password),
+        getOwnerListings(email),
       ]);
       const blockedMessage = getPlanBlockedMessage(plan, ownerListings);
       if (blockedMessage) {
-        setError(`${blockedMessage} Use Starter ($5) or Business ($10) to post more.`);
+        setError(`${blockedMessage} Use Starter (${planSettings.starter.priceLabel}) or Business (${planSettings.business.priceLabel}) to post more.`);
         return;
       }
 
       if (!existingAccount && !isLoggedInUser) {
-        upsertStoredAccount({ email, phone, password });
+        upsertStoredAccount({ email, phone: inputPhone, password });
       } else if (existingAccount) {
         upsertStoredAccount({
           email,
-          phone: phone || existingAccount.phone,
+          phone: existingAccount.phone || inputPhone,
           password: existingAccount.password,
         });
       }
 
-      persistCurrentUser({ email, phone, password });
+      const accountPhone = isLoggedInUser
+        ? currentUser?.phone || inputPhone
+        : existingAccount?.phone || inputPhone;
+
+      persistCurrentUser({ email, phone: accountPhone, password });
 
       const { id } = await createListing({
         category: form.category,
@@ -529,13 +567,13 @@ export default function PostAdPage({ onNavigate }: Props) {
         price: form.price ? parseFloat(form.price) : null,
         location: form.location.trim(),
         contact_email: email || null,
-        contact_phone: phone || null,
+        contact_phone: accountPhone || null,
         images: uploadedPhotos,
         vehicle_details: getVehicleDetails(),
         is_paid: plan.plan_id !== 'free',
         payment_plan_id: plan.plan_id,
         posted_by_email: email || null,
-        posted_by_phone: phone || null,
+        posted_by_phone: accountPhone || null,
         posting_password: password || null,
       });
       setNewListingId(id);
@@ -967,16 +1005,6 @@ export default function PostAdPage({ onNavigate }: Props) {
               className={inputClass}
             />
           </div>
-          <div>
-            <label className={labelClass}>phone</label>
-            <input
-              type="tel"
-              placeholder="(555) 555-5555"
-              value={form.contact_phone}
-              onChange={e => update('contact_phone', e.target.value)}
-              className={inputClass}
-            />
-          </div>
           {isVehicleListing && (
             <div>
               <p className={labelClass}>contact options</p>
@@ -996,34 +1024,61 @@ export default function PostAdPage({ onNavigate }: Props) {
           )}
           {!isLoggedInUser && form.contact_email.trim() && (
             <div className="space-y-3 rounded border border-gray-200 bg-gray-50 p-3">
-              <p className="text-[11px] text-gray-500">
-                {matchingAccount
-                  ? 'This email already has an account. Enter its password to continue.'
-                  : 'This email is new. Create a password below and it will be saved for future posts.'}
-              </p>
-              <div>
-                <label className={labelClass}>password</label>
-                <input
-                  type="password"
-                  value={accountPassword}
-                  onChange={e => setAccountPassword(e.target.value)}
-                  className={inputClass}
-                />
-              </div>
-              {!matchingAccount && (
-                <div>
-                  <label className={labelClass}>confirm password</label>
-                  <input
-                    type="password"
-                    value={confirmPassword}
-                    onChange={e => setConfirmPassword(e.target.value)}
-                    className={inputClass}
-                  />
-                </div>
+              {isCheckingAccount ? (
+                <p className="text-[11px] text-gray-500">Checking email...</p>
+              ) : matchingAccount ? (
+                <>
+                  <p className="text-[11px] text-gray-500">This email already has an account. Enter its password to continue.</p>
+                  <div>
+                    <label className={labelClass}>password</label>
+                    <input
+                      type="password"
+                      value={accountPassword}
+                      onChange={e => {
+                        setAccountPassword(e.target.value);
+                        setError('');
+                      }}
+                      className={inputClass}
+                    />
+                    {passwordMismatch && <p className="mt-1 text-xs text-[#cc0000]">Password incorrect.</p>}
+                  </div>
+                </>
+              ) : (
+                <>
+                  <p className="text-[11px] text-gray-500">This email does not exist. Create account to post.</p>
+                  <div>
+                    <label className={labelClass}>phone number</label>
+                    <input
+                      type="tel"
+                      placeholder="(555) 555-5555"
+                      value={form.contact_phone}
+                      onChange={e => update('contact_phone', e.target.value)}
+                      className={inputClass}
+                    />
+                  </div>
+                  <div>
+                    <label className={labelClass}>password</label>
+                    <input
+                      type="password"
+                      value={accountPassword}
+                      onChange={e => setAccountPassword(e.target.value)}
+                      className={inputClass}
+                    />
+                  </div>
+                  <div>
+                    <label className={labelClass}>confirm password</label>
+                    <input
+                      type="password"
+                      value={confirmPassword}
+                      onChange={e => setConfirmPassword(e.target.value)}
+                      className={inputClass}
+                    />
+                  </div>
+                </>
               )}
             </div>
           )}
-          <p className="text-[11px] text-gray-400">Your email and phone will be visible in the listing.</p>
+          <p className="text-[11px] text-gray-400">Your email is used for replies. Phone is collected only when creating a new account.</p>
           <div className="space-y-2 border border-blue-200 bg-blue-50 p-3 text-sm">
             <p className="font-semibold text-gray-800">DigitalBizList Pricing</p>
             <div className="grid gap-2 sm:grid-cols-3">
@@ -1069,8 +1124,8 @@ export default function PostAdPage({ onNavigate }: Props) {
             />
           )}
           <div className="flex gap-3 pt-1">
-            <button onClick={handleSubmit} disabled={submitting} className={`${btnPrimary} disabled:opacity-50`}>
-              {submitting ? 'posting...' : 'publish listing'}
+            <button onClick={handleSubmit} disabled={submitting || isCheckingAccount} className={`${btnPrimary} disabled:opacity-50`}>
+              {submitting ? 'posting...' : isCheckingAccount ? 'checking account' : isNewContactEmail ? 'create account and post' : 'publish listing'}
             </button>
             <button onClick={() => setStep('details')} className="text-[#00519b] hover:underline text-sm">&larr; back</button>
           </div>
