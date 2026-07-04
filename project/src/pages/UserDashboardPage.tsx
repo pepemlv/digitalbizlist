@@ -808,7 +808,9 @@ export default function UserDashboardPage({ onNavigate }: Props) {
 
       <div className="border border-gray-200 bg-gray-50 p-3 text-sm text-gray-600">
         <p className="font-semibold text-gray-800">After payment</p>
-        <p className="mt-1">Your card is processed by Stripe inside this page. The backend activates your plan after payment succeeds.</p>
+        <p className="mt-1">
+          Your card is processed securely by Stripe. For your safety, DigitalBizList does not store or keep your card information on this website. After payment succeeds, the backend activates your plan.
+        </p>
       </div>
       {planMessage && <p className="text-xs text-[#cc0000]">{planMessage}</p>}
     </section>
