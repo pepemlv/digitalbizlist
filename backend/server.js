@@ -17,11 +17,11 @@ const stripe = process.env.STRIPE_SECRET_KEY
   ? new Stripe(process.env.STRIPE_SECRET_KEY, { apiVersion: '2024-12-18.acacia' })
   : null;
 
-const pricingPlans = {
+const defaultPricingPlans = {
   starter: {
     planId: 'starter',
     name: 'Starter Plan',
-    amount: 500,
+    amount: 100,
     adsLimit: 5,
     publishWindowDays: null,
     activeDays: 60,
@@ -29,7 +29,7 @@ const pricingPlans = {
   business: {
     planId: 'business',
     name: 'Business Plan',
-    amount: 1000,
+    amount: 200,
     adsLimit: 15,
     publishWindowDays: 30,
     activeDays: 60,
@@ -73,8 +73,7 @@ function addDays(date, days) {
 
 async function activatePlan({ email, planId, paymentIntentId }) {
   if (!db) throw new Error('Firebase Admin is not initialized.');
-  const plan = pricingPlans[planId];
-  if (!plan) throw new Error(`Unknown plan: ${planId}`);
+  const plan = await getPricingPlan(planId);
 
   const now = new Date();
   const periodEndsAt = plan.publishWindowDays ? addDays(now, plan.publishWindowDays).toISOString() : null;
@@ -90,6 +89,37 @@ async function activatePlan({ email, planId, paymentIntentId }) {
     payment_intent_id: paymentIntentId || null,
     updated_at: now.toISOString(),
   }, { merge: true });
+}
+
+async function getPricingPlan(planId) {
+  const fallback = defaultPricingPlans[planId];
+  if (!fallback) throw new Error(`Unknown plan: ${planId}`);
+  if (!db) return fallback;
+
+  const planDoc = await db.collection('pricingPlans').doc(planId).get();
+  if (!planDoc.exists) return fallback;
+
+  const data = planDoc.data() || {};
+  const amount = Number(data.amount_cents);
+  const adsLimit = Number(data.ads_limit);
+  const activeDays = Number(data.active_days);
+  const publishWindowValue = data.publish_window_days;
+  const publishWindowDays = publishWindowValue === null || publishWindowValue === ''
+    ? null
+    : Number(publishWindowValue);
+
+  return {
+    ...fallback,
+    name: typeof data.name === 'string' && data.name.trim() ? data.name.trim() : fallback.name,
+    amount: Number.isFinite(amount) && amount >= 50 ? Math.round(amount) : fallback.amount,
+    adsLimit: Number.isFinite(adsLimit) && adsLimit > 0 ? Math.round(adsLimit) : fallback.adsLimit,
+    activeDays: Number.isFinite(activeDays) && activeDays > 0 ? Math.round(activeDays) : fallback.activeDays,
+    publishWindowDays: publishWindowDays === null
+      ? null
+      : Number.isFinite(publishWindowDays) && publishWindowDays > 0
+        ? Math.round(publishWindowDays)
+        : fallback.publishWindowDays,
+  };
 }
 
 app.use(cors({
@@ -157,13 +187,12 @@ app.post('/api/stripe/create-payment-intent', async (request, response) => {
   if (!stripe) return response.status(500).json({ error: 'Stripe is not configured.' });
 
   const { planId, email } = request.body || {};
-  const plan = pricingPlans[planId];
   const normalizedEmail = String(email || '').trim().toLowerCase();
 
-  if (!plan) return response.status(400).json({ error: 'Invalid plan.' });
   if (!normalizedEmail) return response.status(400).json({ error: 'Email is required.' });
 
   try {
+    const plan = await getPricingPlan(planId);
     const paymentIntent = await stripe.paymentIntents.create({
       amount: plan.amount,
       currency: 'usd',

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { CityGroup, createListing, getCities, getListings, getUserPlan, pricingPlans, UserPlan, VehicleDetails } from '../lib/firebase';
+import { CityGroup, createListing, getCities, getListings, getPricingPlans, getUserPlan, pricingPlans, UserPlan, VehicleDetails } from '../lib/firebase';
 import { categoryGroups } from '../data/categories';
 import PlanPaymentForm from '../components/PlanPaymentForm';
 import {
@@ -133,6 +133,7 @@ export default function PostAdPage({ onNavigate }: Props) {
   const [currentUser, setCurrentUser] = useState<StoredUserProfile | null>(null);
   const [discoveredAccount, setDiscoveredAccount] = useState<StoredUserProfile | null>(null);
   const [cityGroups, setCityGroups] = useState<CityGroup[]>([]);
+  const [planSettings, setPlanSettings] = useState(pricingPlans);
 
   const selectedGroup = categoryGroups.find(g => g.id === form.category);
   const isVehicleListing = form.category === 'autos' && form.subcategory === 'cars + trucks';
@@ -234,8 +235,8 @@ export default function PostAdPage({ onNavigate }: Props) {
       }
     }
 
-    if (plan.plan_id === 'starter' && plan.ads_used >= pricingPlans.starter.adLimit) {
-      return 'Starter Plan has used all 5 ads. Upgrade to Business or wait for a new purchase.';
+    if (plan.plan_id === 'starter' && plan.ads_used >= planSettings.starter.adLimit) {
+      return `Starter Plan has used all ${planSettings.starter.adLimit} ads. Upgrade to Business or wait for a new purchase.`;
     }
 
     if (plan.plan_id === 'business') {
@@ -244,8 +245,8 @@ export default function PostAdPage({ onNavigate }: Props) {
         return 'Business Plan publishing window has expired. Renew to publish more ads.';
       }
 
-      if (plan.ads_used >= pricingPlans.business.adLimit) {
-        return 'Business Plan has used all 15 ads. Renew to publish more ads.';
+      if (plan.ads_used >= planSettings.business.adLimit) {
+        return `Business Plan has used all ${planSettings.business.adLimit} ads. Renew to publish more ads.`;
       }
     }
 
@@ -281,6 +282,23 @@ export default function PostAdPage({ onNavigate }: Props) {
     } catch {
       setCurrentUser(null);
     }
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadPricingPlans = async () => {
+      try {
+        const plans = await getPricingPlans();
+        if (!cancelled) setPlanSettings(plans);
+      } catch {
+        if (!cancelled) setPlanSettings(pricingPlans);
+      }
+    };
+
+    void loadPricingPlans();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -1015,25 +1033,25 @@ export default function PostAdPage({ onNavigate }: Props) {
                 <p className="mt-1 text-xs text-gray-500">Ad stays online 60 days.</p>
               </div>
               <div className="border border-gray-200 bg-white p-2">
-                <p className="font-semibold text-gray-900">Starter - $5</p>
-                <p className="text-xs text-gray-600">Publish up to 5 ads.</p>
+                <p className="font-semibold text-gray-900">Starter - {planSettings.starter.priceLabel}</p>
+                <p className="text-xs text-gray-600">Publish up to {planSettings.starter.adLimit} ads.</p>
                 <button
                   type="button"
                   onClick={() => handleUpgrade('starter')}
                   className="mt-2 border border-[#00519b] bg-blue-50 px-2 py-1 text-xs font-semibold text-[#00519b] hover:bg-blue-100 disabled:opacity-50"
                 >
-                  buy 5 ads
+                  buy {planSettings.starter.adLimit} ads
                 </button>
               </div>
               <div className="border border-gray-200 bg-white p-2">
-                <p className="font-semibold text-gray-900">Business - $10</p>
-                <p className="text-xs text-gray-600">Publish up to 15 ads in 30 days.</p>
+                <p className="font-semibold text-gray-900">Business - {planSettings.business.priceLabel}</p>
+                <p className="text-xs text-gray-600">Publish up to {planSettings.business.adLimit} ads in {planSettings.business.publishWindowDays ?? 30} days.</p>
                 <button
                   type="button"
                   onClick={() => handleUpgrade('business')}
                   className="mt-2 border border-[#00519b] bg-blue-50 px-2 py-1 text-xs font-semibold text-[#00519b] hover:bg-blue-100 disabled:opacity-50"
                 >
-                  buy 15 ads
+                  buy {planSettings.business.adLimit} ads
                 </button>
               </div>
             </div>
@@ -1041,6 +1059,7 @@ export default function PostAdPage({ onNavigate }: Props) {
           {selectedPaymentPlan && (
             <PlanPaymentForm
               planId={selectedPaymentPlan}
+              plan={planSettings[selectedPaymentPlan]}
               email={(form.contact_email.trim().toLowerCase() || currentUser?.email.trim().toLowerCase() || '')}
               onCancel={() => setSelectedPaymentPlan(null)}
               onSuccess={() => {

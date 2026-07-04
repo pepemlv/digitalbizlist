@@ -1,12 +1,13 @@
 import { FormEvent, useState } from 'react';
 import { CardElement, Elements, useElements, useStripe } from '@stripe/react-stripe-js';
 import { loadStripe } from '@stripe/stripe-js';
-import { confirmPlanPayment, createPlanPaymentIntent, PricingPlanId, pricingPlans } from '../lib/firebase';
+import { confirmPlanPayment, createPlanPaymentIntent, PricingPlan, PricingPlanId, pricingPlans } from '../lib/firebase';
 
 type PaidPlanId = Exclude<PricingPlanId, 'free'>;
 
 type Props = {
   planId: PaidPlanId;
+  plan?: PricingPlan;
   email: string;
   onCancel: () => void;
   onSuccess: () => void;
@@ -15,12 +16,12 @@ type Props = {
 const publishableKey = import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY || '';
 const stripePromise = publishableKey ? loadStripe(publishableKey) : null;
 
-function PaymentFields({ planId, email, onCancel, onSuccess }: Props) {
+function PaymentFields({ planId, plan: providedPlan, email, onCancel, onSuccess }: Props) {
   const stripe = useStripe();
   const elements = useElements();
   const [status, setStatus] = useState('');
   const [submitting, setSubmitting] = useState(false);
-  const plan = pricingPlans[planId];
+  const plan = providedPlan ?? pricingPlans[planId];
 
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault();

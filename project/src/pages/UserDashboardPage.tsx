@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { deleteListing, getListingInquiries, getListings, getUserPlan, hideListing, Listing, ListingInquiry, pricingPlans, updateListingDetails, updateListingSoldStatus, UserPlan } from '../lib/firebase';
+import { deleteListing, getListingInquiries, getListings, getPricingPlans, getUserPlan, hideListing, Listing, ListingInquiry, PricingPlan, pricingPlans, updateListingDetails, updateListingSoldStatus, updatePricingPlan, UserPlan } from '../lib/firebase';
 import PlanPaymentForm from '../components/PlanPaymentForm';
 
 type Page = 'home' | 'browse' | 'post' | 'listing' | 'user';
@@ -14,7 +14,7 @@ type UserProfile = {
   password: string;
 };
 
-type DashboardSection = 'announcements' | 'plans' | 'settings' | 'messages';
+type DashboardSection = 'announcements' | 'plans' | 'settings' | 'messages' | 'admin';
 
 type MessageItem = {
   id: number;
@@ -36,8 +36,27 @@ type EditListingForm = {
   images: string[];
 };
 
+type PricingPlanForm = {
+  name: string;
+  amountDollars: string;
+  adLimit: string;
+  publishWindowDays: string;
+  activeDays: string;
+  description: string;
+};
+
 const PROFILE_STORAGE_KEY = 'digitalbizlist-user-profile';
 const MAX_LISTING_IMAGES = 15;
+const ADMIN_EMAILS = ['papyusmail@gmail.com'];
+
+const toPricingForm = (plan: PricingPlan): PricingPlanForm => ({
+  name: plan.name,
+  amountDollars: (plan.amountCents / 100).toString(),
+  adLimit: String(plan.adLimit),
+  publishWindowDays: plan.publishWindowDays == null ? '' : String(plan.publishWindowDays),
+  activeDays: String(plan.activeDays),
+  description: plan.description,
+});
 
 export default function UserDashboardPage({ onNavigate }: Props) {
   const [profile, setProfile] = useState<UserProfile>({ email: '', phone: '', password: '' });
@@ -61,8 +80,14 @@ export default function UserDashboardPage({ onNavigate }: Props) {
   });
   const [listingActionMessage, setListingActionMessage] = useState('');
   const [userPlan, setUserPlan] = useState<UserPlan | null>(null);
+  const [planSettings, setPlanSettings] = useState(pricingPlans);
   const [planMessage, setPlanMessage] = useState('');
   const [selectedPaymentPlan, setSelectedPaymentPlan] = useState<'starter' | 'business' | null>(null);
+  const [adminPricingForm, setAdminPricingForm] = useState<Record<'starter' | 'business', PricingPlanForm>>({
+    starter: toPricingForm(pricingPlans.starter),
+    business: toPricingForm(pricingPlans.business),
+  });
+  const [adminPricingMessage, setAdminPricingMessage] = useState('');
   const [messages] = useState<MessageItem[]>([
     {
       id: 1,
@@ -104,6 +129,28 @@ export default function UserDashboardPage({ onNavigate }: Props) {
     };
 
     loadListings();
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadPricingPlans = async () => {
+      try {
+        const plans = await getPricingPlans();
+        if (cancelled) return;
+        setPlanSettings(plans);
+        setAdminPricingForm({
+          starter: toPricingForm(plans.starter),
+          business: toPricingForm(plans.business),
+        });
+      } catch {
+        if (!cancelled) setAdminPricingMessage('Could not load pricing settings.');
+      }
+    };
+
+    void loadPricingPlans();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -159,12 +206,12 @@ export default function UserDashboardPage({ onNavigate }: Props) {
     id: 'free',
     email: profile.email,
     plan_id: 'free' as const,
-    ads_limit: pricingPlans.free.adLimit,
+    ads_limit: planSettings.free.adLimit,
     ads_used: 0,
     period_started_at: null,
     period_ends_at: null,
   };
-  const planDefinition = pricingPlans[effectivePlan.plan_id];
+  const planDefinition = planSettings[effectivePlan.plan_id];
   const planUsedCount = effectivePlan.plan_id === 'free' ? activeListings.length : effectivePlan.ads_used;
   const adsRemaining = Math.max(0, effectivePlan.ads_limit - planUsedCount);
   const progressPercent = effectivePlan.ads_limit > 0 ? Math.min(100, Math.round((planUsedCount / effectivePlan.ads_limit) * 100)) : 0;
@@ -337,6 +384,63 @@ export default function UserDashboardPage({ onNavigate }: Props) {
         : 'border-transparent text-gray-700 hover:bg-gray-50 hover:text-[#00519b]'
     }`;
   const dashboardTitle = `${profile.email || 'User'} dashboard`;
+  const isAdmin = ADMIN_EMAILS.includes(profile.email.trim().toLowerCase());
+
+  const updateAdminPricingField = (planId: 'starter' | 'business', field: keyof PricingPlanForm, value: string) => {
+    setAdminPricingForm((prev) => ({
+      ...prev,
+      [planId]: {
+        ...prev[planId],
+        [field]: value,
+      },
+    }));
+    setAdminPricingMessage('');
+  };
+
+  const saveAdminPricingPlan = async (planId: 'starter' | 'business') => {
+    const form = adminPricingForm[planId];
+    const amountDollars = Number(form.amountDollars);
+    const adLimit = Number(form.adLimit);
+    const publishWindowDays = form.publishWindowDays.trim() ? Number(form.publishWindowDays) : null;
+    const activeDays = Number(form.activeDays);
+
+    if (!form.name.trim() || !form.description.trim()) {
+      setAdminPricingMessage('Plan name and description are required.');
+      return;
+    }
+
+    if (!Number.isFinite(amountDollars) || amountDollars < 0.5) {
+      setAdminPricingMessage('Stripe payments must be at least $0.50.');
+      return;
+    }
+
+    if (!Number.isFinite(adLimit) || adLimit < 1 || !Number.isFinite(activeDays) || activeDays < 1) {
+      setAdminPricingMessage('Ad limit and active days must be valid numbers.');
+      return;
+    }
+
+    if (publishWindowDays !== null && (!Number.isFinite(publishWindowDays) || publishWindowDays < 1)) {
+      setAdminPricingMessage('Publish window must be blank or a valid number of days.');
+      return;
+    }
+
+    await updatePricingPlan(planId, {
+      name: form.name.trim(),
+      amountCents: Math.round(amountDollars * 100),
+      adLimit,
+      publishWindowDays,
+      activeDays,
+      description: form.description.trim(),
+    });
+
+    const plans = await getPricingPlans();
+    setPlanSettings(plans);
+    setAdminPricingForm({
+      starter: toPricingForm(plans.starter),
+      business: toPricingForm(plans.business),
+    });
+    setAdminPricingMessage(`${plans[planId].name} saved.`);
+  };
 
   const renderAccountSummary = () => (
     <section className="border border-gray-300 bg-white p-4 space-y-3">
@@ -361,14 +465,14 @@ export default function UserDashboardPage({ onNavigate }: Props) {
             onClick={() => handleUpgrade('starter')}
             className="border border-[#00519b] bg-blue-50 px-3 py-1.5 text-xs font-semibold text-[#00519b] hover:bg-blue-100 disabled:opacity-50"
           >
-            Publish 5 Ads - $5
+            Publish {planSettings.starter.adLimit} Ads - {planSettings.starter.priceLabel}
           </button>
           <button
             type="button"
             onClick={() => handleUpgrade('business')}
             className="border border-[#00519b] bg-blue-50 px-3 py-1.5 text-xs font-semibold text-[#00519b] hover:bg-blue-100 disabled:opacity-50"
           >
-            Publish 15 Ads - $10
+            Publish {planSettings.business.adLimit} Ads - {planSettings.business.priceLabel}
           </button>
         </div>
       </div>
@@ -656,11 +760,11 @@ export default function UserDashboardPage({ onNavigate }: Props) {
 
         <div className={`border p-4 ${selectedPaymentPlan === 'starter' ? 'border-[#00519b] bg-blue-50 ring-2 ring-blue-200' : 'border-[#00519b] bg-blue-50'}`}>
           <p className="text-sm font-semibold text-[#00519b]">Starter Plan</p>
-          <h3 className="mt-1 text-2xl font-semibold text-gray-900">$5</h3>
-          <p className="mt-1 text-sm text-gray-600">Great for small businesses.</p>
+          <h3 className="mt-1 text-2xl font-semibold text-gray-900">{planSettings.starter.priceLabel}</h3>
+          <p className="mt-1 text-sm text-gray-600">{planSettings.starter.description}</p>
           <ul className="mt-3 space-y-1 text-sm text-gray-700">
-            <li>Publish up to 5 ads</li>
-            <li>Ads remain active for 60 days</li>
+            <li>Publish up to {planSettings.starter.adLimit} ads</li>
+            <li>Ads remain active for {planSettings.starter.activeDays} days</li>
             <li>Edit ads anytime</li>
             <li>Publish all 5 immediately or over time</li>
             <li>Valid until all 5 ads are used</li>
@@ -670,18 +774,18 @@ export default function UserDashboardPage({ onNavigate }: Props) {
             onClick={() => handleUpgrade('starter')}
             className="mt-4 w-full border border-[#00519b] bg-[#00519b] px-3 py-2 text-sm font-semibold text-white hover:bg-blue-800 disabled:opacity-50"
           >
-            pay $5
+            pay {planSettings.starter.priceLabel}
           </button>
         </div>
 
         <div className={`border bg-white p-4 ${selectedPaymentPlan === 'business' ? 'border-gray-900 ring-2 ring-gray-300' : 'border-gray-900'}`}>
           <p className="text-sm font-semibold text-gray-900">Business Plan</p>
-          <h3 className="mt-1 text-2xl font-semibold text-gray-900">$10</h3>
-          <p className="mt-1 text-sm text-gray-600">Best for businesses posting often.</p>
+          <h3 className="mt-1 text-2xl font-semibold text-gray-900">{planSettings.business.priceLabel}</h3>
+          <p className="mt-1 text-sm text-gray-600">{planSettings.business.description}</p>
           <ul className="mt-3 space-y-1 text-sm text-gray-700">
-            <li>Publish up to 15 ads</li>
-            <li>Publish anytime during 30 days</li>
-            <li>Every ad stays online for 60 days</li>
+            <li>Publish up to {planSettings.business.adLimit} ads</li>
+            <li>Publish anytime during {planSettings.business.publishWindowDays ?? 30} days</li>
+            <li>Every ad stays online for {planSettings.business.activeDays} days</li>
             <li>Edit ads anytime</li>
             <li>Dashboard with usage statistics</li>
           </ul>
@@ -690,7 +794,7 @@ export default function UserDashboardPage({ onNavigate }: Props) {
             onClick={() => handleUpgrade('business')}
             className="mt-4 w-full border border-gray-900 bg-gray-900 px-3 py-2 text-sm font-semibold text-white hover:bg-gray-700 disabled:opacity-50"
           >
-            pay $10
+            pay {planSettings.business.priceLabel}
           </button>
         </div>
       </div>
@@ -698,6 +802,7 @@ export default function UserDashboardPage({ onNavigate }: Props) {
       {selectedPaymentPlan && (
         <PlanPaymentForm
           planId={selectedPaymentPlan}
+          plan={planSettings[selectedPaymentPlan]}
           email={profile.email.trim().toLowerCase()}
           onCancel={() => setSelectedPaymentPlan(null)}
           onSuccess={refreshPlanAfterPayment}
@@ -709,6 +814,95 @@ export default function UserDashboardPage({ onNavigate }: Props) {
         <p className="mt-1">Your card is processed by Stripe inside this page. The backend activates your plan after payment succeeds.</p>
       </div>
       {planMessage && <p className="text-xs text-[#cc0000]">{planMessage}</p>}
+    </section>
+  );
+
+  const renderAdminPricing = () => (
+    <section className="border border-gray-300 bg-white p-4 space-y-4">
+      <div>
+        <p className="text-xs font-semibold uppercase text-gray-500">Admin</p>
+        <h2 className="text-lg font-semibold text-gray-900">Plan pricing</h2>
+        <p className="text-sm text-gray-600">These prices are saved in Firestore and used by the backend before Stripe charges the card.</p>
+      </div>
+      <div className="grid gap-4 md:grid-cols-2">
+        {(['starter', 'business'] as const).map((planId) => {
+          const form = adminPricingForm[planId];
+          return (
+            <div key={planId} className="border border-gray-200 p-3 space-y-3">
+              <p className="font-semibold text-gray-900">{planSettings[planId].name}</p>
+              <label className="block">
+                <span className="mb-1 block text-xs font-semibold text-gray-600">Plan name</span>
+                <input
+                  value={form.name}
+                  onChange={(event) => updateAdminPricingField(planId, 'name', event.target.value)}
+                  className="w-full border border-gray-400 px-2 py-1.5 text-sm focus:outline-none focus:border-blue-500"
+                />
+              </label>
+              <div className="grid grid-cols-2 gap-3">
+                <label className="block">
+                  <span className="mb-1 block text-xs font-semibold text-gray-600">Price in dollars</span>
+                  <input
+                    type="number"
+                    min="0.5"
+                    step="0.01"
+                    value={form.amountDollars}
+                    onChange={(event) => updateAdminPricingField(planId, 'amountDollars', event.target.value)}
+                    className="w-full border border-gray-400 px-2 py-1.5 text-sm focus:outline-none focus:border-blue-500"
+                  />
+                </label>
+                <label className="block">
+                  <span className="mb-1 block text-xs font-semibold text-gray-600">Ad limit</span>
+                  <input
+                    type="number"
+                    min="1"
+                    value={form.adLimit}
+                    onChange={(event) => updateAdminPricingField(planId, 'adLimit', event.target.value)}
+                    className="w-full border border-gray-400 px-2 py-1.5 text-sm focus:outline-none focus:border-blue-500"
+                  />
+                </label>
+                <label className="block">
+                  <span className="mb-1 block text-xs font-semibold text-gray-600">Publish window days</span>
+                  <input
+                    type="number"
+                    min="1"
+                    placeholder="blank = until used"
+                    value={form.publishWindowDays}
+                    onChange={(event) => updateAdminPricingField(planId, 'publishWindowDays', event.target.value)}
+                    className="w-full border border-gray-400 px-2 py-1.5 text-sm focus:outline-none focus:border-blue-500"
+                  />
+                </label>
+                <label className="block">
+                  <span className="mb-1 block text-xs font-semibold text-gray-600">Active days</span>
+                  <input
+                    type="number"
+                    min="1"
+                    value={form.activeDays}
+                    onChange={(event) => updateAdminPricingField(planId, 'activeDays', event.target.value)}
+                    className="w-full border border-gray-400 px-2 py-1.5 text-sm focus:outline-none focus:border-blue-500"
+                  />
+                </label>
+              </div>
+              <label className="block">
+                <span className="mb-1 block text-xs font-semibold text-gray-600">Description</span>
+                <textarea
+                  value={form.description}
+                  onChange={(event) => updateAdminPricingField(planId, 'description', event.target.value)}
+                  rows={3}
+                  className="w-full border border-gray-400 px-2 py-1.5 text-sm focus:outline-none focus:border-blue-500"
+                />
+              </label>
+              <button
+                type="button"
+                onClick={() => saveAdminPricingPlan(planId)}
+                className="border border-gray-500 bg-gray-100 px-3 py-1.5 text-sm hover:bg-gray-200"
+              >
+                Save {planId} pricing
+              </button>
+            </div>
+          );
+        })}
+      </div>
+      {adminPricingMessage && <p className="text-sm text-gray-600">{adminPricingMessage}</p>}
     </section>
   );
 
@@ -815,6 +1009,11 @@ export default function UserDashboardPage({ onNavigate }: Props) {
             <button onClick={() => setActiveSection('messages')} className={navButtonClass('messages')}>
               Messages
             </button>
+            {isAdmin && (
+              <button onClick={() => setActiveSection('admin')} className={navButtonClass('admin')}>
+                Admin pricing
+              </button>
+            )}
             <button onClick={logoutToHome} className="w-full text-left px-3 py-2 text-sm border border-transparent text-[#cc0000] hover:bg-red-50">
               Logout
             </button>
@@ -831,6 +1030,7 @@ export default function UserDashboardPage({ onNavigate }: Props) {
           {activeSection === 'plans' && renderPlans()}
           {activeSection === 'settings' && renderSettings()}
           {activeSection === 'messages' && renderMessages()}
+          {activeSection === 'admin' && isAdmin && renderAdminPricing()}
         </div>
       </div>
     </div>

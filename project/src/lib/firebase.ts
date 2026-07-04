@@ -78,6 +78,7 @@ export interface PricingPlan {
   id: PricingPlanId;
   name: string;
   priceLabel: string;
+  amountCents: number;
   adLimit: number;
   publishWindowDays: number | null;
   activeDays: number;
@@ -180,12 +181,14 @@ export interface CityGroup {
 const citiesCollection = collection(firestore, 'cities');
 const listingsCollection = collection(firestore, 'listings');
 const userPlansCollection = collection(firestore, 'userPlans');
+const pricingPlansCollection = collection(firestore, 'pricingPlans');
 
 export const pricingPlans: Record<PricingPlanId, PricingPlan> = {
   free: {
     id: 'free',
     name: 'Free',
     priceLabel: '$0',
+    amountCents: 0,
     adLimit: 1,
     publishWindowDays: 7,
     activeDays: 60,
@@ -194,7 +197,8 @@ export const pricingPlans: Record<PricingPlanId, PricingPlan> = {
   starter: {
     id: 'starter',
     name: 'Starter Plan',
-    priceLabel: '$5',
+    priceLabel: '$1',
+    amountCents: 100,
     adLimit: 5,
     publishWindowDays: null,
     activeDays: 60,
@@ -203,7 +207,8 @@ export const pricingPlans: Record<PricingPlanId, PricingPlan> = {
   business: {
     id: 'business',
     name: 'Business Plan',
-    priceLabel: '$10',
+    priceLabel: '$2',
+    amountCents: 200,
     adLimit: 15,
     publishWindowDays: 30,
     activeDays: 60,
@@ -616,6 +621,69 @@ export async function getUserPlan(email: string) {
     ads_limit: data.ads_limit ?? pricingPlans[planId].adLimit,
     ads_used: data.ads_used ?? 0,
   };
+}
+
+function planFromFirestore(id: PricingPlanId, data: Partial<{
+  name: string;
+  amount_cents: number;
+  ads_limit: number;
+  publish_window_days: number | null;
+  active_days: number;
+  description: string;
+}>) {
+  const fallback = pricingPlans[id];
+  const amountCents = Number(data.amount_cents);
+  const adLimit = Number(data.ads_limit);
+  const activeDays = Number(data.active_days);
+  const publishWindowValue = data.publish_window_days;
+  const publishWindowDays = publishWindowValue === null || publishWindowValue === undefined
+    ? null
+    : Number(publishWindowValue);
+
+  const cleanAmount = Number.isFinite(amountCents) && amountCents >= 50 ? Math.round(amountCents) : fallback.amountCents;
+
+  return {
+    ...fallback,
+    name: data.name?.trim() || fallback.name,
+    amountCents: cleanAmount,
+    priceLabel: cleanAmount === 0 ? '$0' : `$${(cleanAmount / 100).toLocaleString(undefined, { maximumFractionDigits: 2 })}`,
+    adLimit: Number.isFinite(adLimit) && adLimit > 0 ? Math.round(adLimit) : fallback.adLimit,
+    publishWindowDays: publishWindowDays === null
+      ? null
+      : Number.isFinite(publishWindowDays) && publishWindowDays > 0
+        ? Math.round(publishWindowDays)
+        : fallback.publishWindowDays,
+    activeDays: Number.isFinite(activeDays) && activeDays > 0 ? Math.round(activeDays) : fallback.activeDays,
+    description: data.description?.trim() || fallback.description,
+  };
+}
+
+export async function getPricingPlans() {
+  const snapshot = await getDocs(pricingPlansCollection);
+  const merged = { ...pricingPlans };
+  snapshot.docs.forEach((planDoc) => {
+    const id = planDoc.id as PricingPlanId;
+    if (id === 'starter' || id === 'business') {
+      merged[id] = planFromFirestore(id, planDoc.data());
+    }
+  });
+  return merged;
+}
+
+export async function updatePricingPlan(
+  id: Exclude<PricingPlanId, 'free'>,
+  data: Pick<PricingPlan, 'name' | 'amountCents' | 'adLimit' | 'publishWindowDays' | 'activeDays' | 'description'>,
+) {
+  const cleanAmount = Math.max(50, Math.round(data.amountCents));
+  await setDoc(doc(pricingPlansCollection, id), {
+    name: data.name.trim(),
+    amount_cents: cleanAmount,
+    ads_limit: Math.max(1, Math.round(data.adLimit)),
+    publish_window_days: data.publishWindowDays == null ? null : Math.max(1, Math.round(data.publishWindowDays)),
+    active_days: Math.max(1, Math.round(data.activeDays)),
+    description: data.description.trim(),
+    updated_at: new Date().toISOString(),
+  }, { merge: true });
 }
 
 const stripeBackendUrl = (import.meta.env.VITE_STRIPE_BACKEND_URL || 'https://digitalbizlist.onrender.com').replace(/\/+$/, '');
