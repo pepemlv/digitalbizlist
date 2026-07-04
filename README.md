@@ -29,7 +29,7 @@ Or use the included `render.yaml` blueprint.
 Set these in Render:
 
 ```env
-FRONTEND_URL=https://your-frontend-domain.com
+FRONTEND_URL=https://digitalbizlist.com
 STRIPE_SECRET_KEY=sk_live_or_test_xxx
 STRIPE_WEBHOOK_SECRET=whsec_xxx
 STRIPE_STARTER_PRICE_ID=price_xxx
@@ -66,7 +66,7 @@ The frontend dashboard reads that document to show the active plan.
 In the frontend hosting provider, set:
 
 ```env
-VITE_STRIPE_CHECKOUT_ENDPOINT=https://your-render-backend.onrender.com/api/stripe/create-checkout-session
+VITE_STRIPE_CHECKOUT_ENDPOINT=https://digitalbizlist.onrender.com/api/stripe/create-checkout-session
 ```
 
 Local frontend app is in `project/`.

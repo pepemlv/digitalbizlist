@@ -619,7 +619,7 @@ export async function getUserPlan(email: string) {
 }
 
 export async function startStripeCheckout(planId: Exclude<PricingPlanId, 'free'>, email: string) {
-  const checkoutEndpoint = import.meta.env.VITE_STRIPE_CHECKOUT_ENDPOINT || '/api/stripe/create-checkout-session';
+  const checkoutEndpoint = import.meta.env.VITE_STRIPE_CHECKOUT_ENDPOINT || 'https://digitalbizlist.onrender.com/api/stripe/create-checkout-session';
   const response = await fetch(checkoutEndpoint, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
