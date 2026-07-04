@@ -212,11 +212,17 @@ export default function UserDashboardPage({ onNavigate }: Props) {
   const planUsedCount = effectivePlan.plan_id === 'free' ? activeListings.length : effectivePlan.ads_used;
   const adsRemaining = Math.max(0, effectivePlan.ads_limit - planUsedCount);
   const progressPercent = effectivePlan.ads_limit > 0 ? Math.min(100, Math.round((planUsedCount / effectivePlan.ads_limit) * 100)) : 0;
-  const timeLeftLabel = (() => {
-    if (effectivePlan.plan_id === 'starter') return 'Valid until all 5 ads are used';
-    if (!effectivePlan.period_ends_at) return effectivePlan.plan_id === 'free' ? '7-day free posting rule' : 'No active window';
+  const publishDeadlineLabel = (() => {
+    if (effectivePlan.plan_id === 'free') return '7-day free posting rule';
+    if (!effectivePlan.period_ends_at) return 'Starts after your first ad';
+    const deadline = new Date(effectivePlan.period_ends_at);
+    const formattedDeadline = deadline.toLocaleDateString(undefined, {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+    });
     const days = Math.max(0, Math.ceil((new Date(effectivePlan.period_ends_at).getTime() - Date.now()) / 86400000));
-    return `${days} Day${days === 1 ? '' : 's'} Remaining`;
+    return `${formattedDeadline} (${days} day${days === 1 ? '' : 's'} left)`;
   })();
 
   const getListingDaysLeft = (item: Listing) => {
@@ -483,8 +489,8 @@ export default function UserDashboardPage({ onNavigate }: Props) {
           <p className="font-semibold text-gray-900">{activeListings.length}</p>
         </div>
         <div className="border border-gray-200 p-3 sm:col-span-2">
-          <p className="text-xs text-gray-500">Time Left to Publish</p>
-          <p className="font-semibold text-gray-900">{timeLeftLabel}</p>
+          <p className="text-xs text-gray-500">Last day to publish package ads</p>
+          <p className="font-semibold text-gray-900">{publishDeadlineLabel}</p>
         </div>
       </div>
       <div>
@@ -763,8 +769,8 @@ export default function UserDashboardPage({ onNavigate }: Props) {
             <li>Publish up to {planSettings.starter.adLimit} ads</li>
             <li>Ads remain active for {planSettings.starter.activeDays} days</li>
             <li>Edit ads anytime</li>
-            <li>Publish all 5 immediately or over time</li>
-            <li>Valid until all 5 ads are used</li>
+            <li>Publish all {planSettings.starter.adLimit} ads within {planSettings.starter.publishWindowDays ?? 30} days</li>
+            <li>The 30 days start after your first package ad</li>
           </ul>
           <button
             type="button"
@@ -781,7 +787,8 @@ export default function UserDashboardPage({ onNavigate }: Props) {
           <p className="mt-1 text-sm text-gray-600">{planSettings.business.description}</p>
           <ul className="mt-3 space-y-1 text-sm text-gray-700">
             <li>Publish up to {planSettings.business.adLimit} ads</li>
-            <li>Publish anytime during {planSettings.business.publishWindowDays ?? 30} days</li>
+            <li>Publish all {planSettings.business.adLimit} ads within {planSettings.business.publishWindowDays ?? 30} days</li>
+            <li>The 30 days start after your first package ad</li>
             <li>Every ad stays online for {planSettings.business.activeDays} days</li>
             <li>Edit ads anytime</li>
             <li>Dashboard with usage statistics</li>
@@ -809,7 +816,7 @@ export default function UserDashboardPage({ onNavigate }: Props) {
       <div className="border border-gray-200 bg-gray-50 p-3 text-sm text-gray-600">
         <p className="font-semibold text-gray-800">After payment</p>
         <p className="mt-1">
-          Your card is processed securely by Stripe. For your safety, DigitalBizList does not store or keep your card information on this website. After payment succeeds, the backend activates your plan.
+          Your card is processed securely by Stripe. DigitalBizList does not store your card information. After payment succeeds, your plan is activated automatically.
         </p>
       </div>
       {planMessage && <p className="text-xs text-[#cc0000]">{planMessage}</p>}
@@ -864,7 +871,7 @@ export default function UserDashboardPage({ onNavigate }: Props) {
                   <input
                     type="number"
                     min="1"
-                    placeholder="blank = until used"
+                    placeholder="blank = 30 days"
                     value={form.publishWindowDays}
                     onChange={(event) => updateAdminPricingField(planId, 'publishWindowDays', event.target.value)}
                     className="w-full border border-gray-400 px-2 py-1.5 text-sm focus:outline-none focus:border-blue-500"

@@ -1,7 +1,7 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
 import { getDatabase, get, limitToLast, onValue, orderByChild, push, query as databaseQuery, ref, remove, serverTimestamp, update } from 'firebase/database';
-import { arrayUnion, collection, deleteDoc, doc, getDoc, getDocs, getFirestore, limit as firestoreLimit, orderBy, query as firestoreQuery, setDoc, updateDoc } from 'firebase/firestore';
+import { arrayUnion, collection, deleteDoc, doc, getDoc, getDocs, getFirestore, limit as firestoreLimit, orderBy, query as firestoreQuery, runTransaction, setDoc, updateDoc } from 'firebase/firestore';
 import { getDownloadURL, getStorage, ref as storageRef, uploadString } from 'firebase/storage';
 import { categoryGroups } from '../data/categories';
 import { cityGroups, cityOptions } from '../data/cities';
@@ -200,9 +200,9 @@ export const pricingPlans: Record<PricingPlanId, PricingPlan> = {
     priceLabel: '$1',
     amountCents: 100,
     adLimit: 5,
-    publishWindowDays: null,
+    publishWindowDays: 30,
     activeDays: 60,
-    description: 'Publish up to 5 ads now or over time.',
+    description: 'Publish up to 5 ads during 30 days after your first ad.',
   },
   business: {
     id: 'business',
@@ -215,6 +215,10 @@ export const pricingPlans: Record<PricingPlanId, PricingPlan> = {
     description: 'Publish up to 15 ads during 30 days.',
   },
 };
+
+function addDays(date: Date, days: number) {
+  return new Date(date.getTime() + days * 24 * 60 * 60 * 1000);
+}
 
 function toArray<T extends { id?: string }>(snapshot: { val?: () => Record<string, unknown> | null }) {
   const value = snapshot.val?.();
@@ -649,7 +653,7 @@ function planFromFirestore(id: PricingPlanId, data: Partial<{
     priceLabel: cleanAmount === 0 ? '$0' : `$${(cleanAmount / 100).toLocaleString(undefined, { maximumFractionDigits: 2 })}`,
     adLimit: Number.isFinite(adLimit) && adLimit > 0 ? Math.round(adLimit) : fallback.adLimit,
     publishWindowDays: publishWindowDays === null
-      ? null
+      ? fallback.publishWindowDays
       : Number.isFinite(publishWindowDays) && publishWindowDays > 0
         ? Math.round(publishWindowDays)
         : fallback.publishWindowDays,
@@ -740,7 +744,42 @@ export async function createListing(data: Omit<Listing, 'id' | 'created_at' | 'u
     updated_at: createdAt,
   });
 
+  if (data.payment_plan_id && data.payment_plan_id !== 'free' && data.posted_by_email) {
+    await recordPaidPlanAdUse(data.posted_by_email, data.payment_plan_id);
+  }
+
   return { id: listingDoc.id };
+}
+
+async function recordPaidPlanAdUse(email: string, planId: Exclude<PricingPlanId, 'free'>) {
+  const normalizedEmail = email.trim().toLowerCase();
+  if (!normalizedEmail) return;
+
+  const plans = await getPricingPlans();
+  const plan = plans[planId];
+  const now = new Date();
+  const nowIso = now.toISOString();
+  const planDoc = doc(userPlansCollection, accountDocId(normalizedEmail));
+
+  await runTransaction(firestore, async (transaction) => {
+    const snapshot = await transaction.get(planDoc);
+    if (!snapshot.exists()) return;
+
+    const data = snapshot.data() as Partial<UserPlan>;
+    const currentPlanId = data.plan_id === 'starter' || data.plan_id === 'business' ? data.plan_id : null;
+    if (currentPlanId !== planId) return;
+
+    const currentUsed = Number(data.ads_used ?? 0);
+    const startedAt = data.period_started_at || nowIso;
+    const endsAt = data.period_ends_at || addDays(now, plan.publishWindowDays ?? 30).toISOString();
+
+    transaction.set(planDoc, {
+      ads_used: currentUsed + 1,
+      period_started_at: startedAt,
+      period_ends_at: endsAt,
+      updated_at: nowIso,
+    }, { merge: true });
+  });
 }
 
 export async function updateListingApproval(id: string, approvalStatus: NonNullable<Listing['approval_status']>) {

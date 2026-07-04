@@ -249,18 +249,16 @@ export default function PostAdPage({ onNavigate }: Props) {
       }
     }
 
-    if (plan.plan_id === 'starter' && plan.ads_used >= planSettings.starter.adLimit) {
-      return `Starter Plan has used all ${planSettings.starter.adLimit} ads. Upgrade to Business or wait for a new purchase.`;
-    }
-
-    if (plan.plan_id === 'business') {
+    if (plan.plan_id === 'starter' || plan.plan_id === 'business') {
+      const planName = planSettings[plan.plan_id].name;
+      const adLimit = planSettings[plan.plan_id].adLimit;
       const periodEnds = plan.period_ends_at ? new Date(plan.period_ends_at).getTime() : null;
       if (periodEnds && now > periodEnds) {
-        return 'Business Plan publishing window has expired. Renew to publish more ads.';
+        return `${planName} publishing window has expired. Renew to publish more ads.`;
       }
 
-      if (plan.ads_used >= planSettings.business.adLimit) {
-        return `Business Plan has used all ${planSettings.business.adLimit} ads. Renew to publish more ads.`;
+      if (plan.ads_used >= adLimit) {
+        return `${planName} has used all ${adLimit} ads. Renew to publish more ads.`;
       }
     }
 
@@ -1089,7 +1087,7 @@ export default function PostAdPage({ onNavigate }: Props) {
               </div>
               <div className="border border-gray-200 bg-white p-2">
                 <p className="font-semibold text-gray-900">Starter - {planSettings.starter.priceLabel}</p>
-                <p className="text-xs text-gray-600">Publish up to {planSettings.starter.adLimit} ads.</p>
+                <p className="text-xs text-gray-600">Publish up to {planSettings.starter.adLimit} ads within {planSettings.starter.publishWindowDays ?? 30} days after your first ad.</p>
                 <button
                   type="button"
                   onClick={() => handleUpgrade('starter')}
@@ -1100,7 +1098,7 @@ export default function PostAdPage({ onNavigate }: Props) {
               </div>
               <div className="border border-gray-200 bg-white p-2">
                 <p className="font-semibold text-gray-900">Business - {planSettings.business.priceLabel}</p>
-                <p className="text-xs text-gray-600">Publish up to {planSettings.business.adLimit} ads in {planSettings.business.publishWindowDays ?? 30} days.</p>
+                <p className="text-xs text-gray-600">Publish up to {planSettings.business.adLimit} ads within {planSettings.business.publishWindowDays ?? 30} days after your first ad.</p>
                 <button
                   type="button"
                   onClick={() => handleUpgrade('business')}

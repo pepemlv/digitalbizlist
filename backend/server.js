@@ -23,7 +23,7 @@ const defaultPricingPlans = {
     name: 'Starter Plan',
     amount: 100,
     adsLimit: 5,
-    publishWindowDays: null,
+    publishWindowDays: 30,
     activeDays: 60,
   },
   business: {
@@ -84,10 +84,6 @@ function accountDocId(email) {
   return email.trim().toLowerCase().replace(/[^a-z0-9._-]+/g, '_') || 'unknown';
 }
 
-function addDays(date, days) {
-  return new Date(date.getTime() + days * 24 * 60 * 60 * 1000);
-}
-
 async function activatePlan({ email, planId, paymentIntentId }) {
   if (!db) {
     const error = new Error('Firebase Admin is not configured. Add FIREBASE_SERVICE_ACCOUNT or FIREBASE_SERVICE_ACCOUNT_BASE64 in Render.');
@@ -96,17 +92,16 @@ async function activatePlan({ email, planId, paymentIntentId }) {
   }
   const plan = await getPricingPlan(planId);
 
-  const now = new Date();
-  const periodEndsAt = plan.publishWindowDays ? addDays(now, plan.publishWindowDays).toISOString() : null;
   const normalizedEmail = email.trim().toLowerCase();
+  const now = new Date();
 
   await db.collection('userPlans').doc(accountDocId(normalizedEmail)).set({
     email: normalizedEmail,
     plan_id: plan.planId,
     ads_limit: plan.adsLimit,
     ads_used: 0,
-    period_started_at: now.toISOString(),
-    period_ends_at: periodEndsAt,
+    period_started_at: null,
+    period_ends_at: null,
     payment_intent_id: paymentIntentId || null,
     updated_at: now.toISOString(),
   }, { merge: true });
@@ -136,7 +131,7 @@ async function getPricingPlan(planId) {
     adsLimit: Number.isFinite(adsLimit) && adsLimit > 0 ? Math.round(adsLimit) : fallback.adsLimit,
     activeDays: Number.isFinite(activeDays) && activeDays > 0 ? Math.round(activeDays) : fallback.activeDays,
     publishWindowDays: publishWindowDays === null
-      ? null
+      ? fallback.publishWindowDays
       : Number.isFinite(publishWindowDays) && publishWindowDays > 0
         ? Math.round(publishWindowDays)
         : fallback.publishWindowDays,
