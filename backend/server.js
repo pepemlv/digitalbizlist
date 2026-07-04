@@ -36,18 +36,35 @@ const defaultPricingPlans = {
   },
 };
 
-function getServiceAccount() {
-  const raw = process.env.FIREBASE_SERVICE_ACCOUNT;
+function parseServiceAccount(raw) {
   if (!raw) return null;
-  return JSON.parse(raw);
+
+  const serviceAccount = JSON.parse(raw);
+  if (typeof serviceAccount.private_key === 'string') {
+    serviceAccount.private_key = serviceAccount.private_key.replace(/\\n/g, '\n');
+  }
+
+  return serviceAccount;
+}
+
+function getServiceAccount() {
+  if (process.env.FIREBASE_SERVICE_ACCOUNT_BASE64) {
+    return parseServiceAccount(Buffer.from(process.env.FIREBASE_SERVICE_ACCOUNT_BASE64, 'base64').toString('utf8'));
+  }
+
+  return parseServiceAccount(process.env.FIREBASE_SERVICE_ACCOUNT);
 }
 
 if (!admin.apps.length) {
-  const serviceAccount = getServiceAccount();
-  if (serviceAccount) {
-    admin.initializeApp({
-      credential: admin.credential.cert(serviceAccount),
-    });
+  try {
+    const serviceAccount = getServiceAccount();
+    if (serviceAccount) {
+      admin.initializeApp({
+        credential: admin.credential.cert(serviceAccount),
+      });
+    }
+  } catch (error) {
+    console.error(`Firebase Admin initialization failed: ${error.message}`);
   }
 }
 
@@ -72,7 +89,11 @@ function addDays(date, days) {
 }
 
 async function activatePlan({ email, planId, paymentIntentId }) {
-  if (!db) throw new Error('Firebase Admin is not initialized.');
+  if (!db) {
+    const error = new Error('Firebase Admin is not configured. Add FIREBASE_SERVICE_ACCOUNT or FIREBASE_SERVICE_ACCOUNT_BASE64 in Render.');
+    error.statusCode = 503;
+    throw error;
+  }
   const plan = await getPricingPlan(planId);
 
   const now = new Date();
@@ -134,7 +155,7 @@ app.use(cors({
 }));
 
 app.get('/health', (_request, response) => {
-  response.json({ ok: true, service: 'digitalbizlist-backend' });
+  response.json({ ok: true, service: 'digitalbizlist-backend', firebaseAdmin: Boolean(db) });
 });
 
 app.get('/', (_request, response) => {
@@ -212,7 +233,8 @@ app.post('/api/stripe/create-payment-intent', async (request, response) => {
       paymentIntentId: paymentIntent.id,
     });
   } catch (error) {
-    response.status(500).json({ error: error.message });
+    console.error(`Create payment intent failed: ${error.message}`);
+    response.status(error.statusCode || 500).json({ error: error.message });
   }
 });
 
@@ -240,7 +262,8 @@ app.post('/api/stripe/confirm-plan-payment', async (request, response) => {
 
     response.json({ ok: true, planId });
   } catch (error) {
-    response.status(500).json({ error: error.message });
+    console.error(`Confirm plan payment failed: ${error.message}`);
+    response.status(error.statusCode || 500).json({ error: error.message });
   }
 });
 
