@@ -1,0 +1,22 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html, body {
+    font-family: 'Inter', system-ui, sans-serif;
+    background: #fff;
+    color: #333;
+    font-size: 15px;
+  }
+}
+
+@layer utilities {
+  .text-xs {
+    font-size: 0.95rem;
+  }
+
+  .text-sm {
+    font-size: 1rem;
+  }
+}
