@@ -84,6 +84,53 @@ function accountDocId(email) {
   return email.trim().toLowerCase().replace(/[^a-z0-9._-]+/g, '_') || 'unknown';
 }
 
+function addDays(date, days) {
+  return new Date(date.getTime() + days * 24 * 60 * 60 * 1000);
+}
+
+function packageFromLegacyPlan(data) {
+  if (!data || data.plan_id === 'free' || !data.ads_limit) return null;
+
+  return {
+    id: data.payment_intent_id || `legacy-${data.plan_id}`,
+    plan_id: data.plan_id,
+    ads_limit: Number(data.ads_limit) || 0,
+    ads_used: Number(data.ads_used) || 0,
+    purchased_at: data.period_started_at || data.updated_at || new Date().toISOString(),
+    period_started_at: data.period_started_at || null,
+    period_ends_at: data.period_ends_at || null,
+    payment_intent_id: data.payment_intent_id || null,
+  };
+}
+
+function normalizePackages(data) {
+  if (Array.isArray(data?.packages)) return data.packages;
+  const legacyPackage = packageFromLegacyPlan(data);
+  return legacyPackage ? [legacyPackage] : [];
+}
+
+function summarizePackages(packages) {
+  const validPackages = packages.filter((item) => item.plan_id === 'starter' || item.plan_id === 'business');
+  const adsLimit = validPackages.reduce((total, item) => total + (Number(item.ads_limit) || 0), 0);
+  const adsUsed = validPackages.reduce((total, item) => total + (Number(item.ads_used) || 0), 0);
+  const periodEndsAt = validPackages
+    .map((item) => item.period_ends_at)
+    .filter(Boolean)
+    .sort()
+    .at(-1) || null;
+  const periodStartedAt = validPackages.find((item) => item.period_started_at)?.period_started_at || null;
+  const firstAvailable = validPackages.find((item) => (Number(item.ads_limit) || 0) > (Number(item.ads_used) || 0));
+  const activePackage = firstAvailable || validPackages.at(-1);
+
+  return {
+    planId: activePackage?.plan_id || 'free',
+    adsLimit,
+    adsUsed,
+    periodStartedAt,
+    periodEndsAt,
+  };
+}
+
 async function activatePlan({ email, planId, paymentIntentId }) {
   if (!db) {
     const error = new Error('Firebase Admin is not configured. Add FIREBASE_SERVICE_ACCOUNT or FIREBASE_SERVICE_ACCOUNT_BASE64 in Render.');
@@ -94,17 +141,44 @@ async function activatePlan({ email, planId, paymentIntentId }) {
 
   const normalizedEmail = email.trim().toLowerCase();
   const now = new Date();
+  const nowIso = now.toISOString();
+  const packageId = paymentIntentId || `${plan.planId}-${now.getTime()}`;
+  const planRef = db.collection('userPlans').doc(accountDocId(normalizedEmail));
 
-  await db.collection('userPlans').doc(accountDocId(normalizedEmail)).set({
-    email: normalizedEmail,
-    plan_id: plan.planId,
-    ads_limit: plan.adsLimit,
-    ads_used: 0,
-    period_started_at: null,
-    period_ends_at: null,
-    payment_intent_id: paymentIntentId || null,
-    updated_at: now.toISOString(),
-  }, { merge: true });
+  await db.runTransaction(async (transaction) => {
+    const snapshot = await transaction.get(planRef);
+    const existing = snapshot.exists ? snapshot.data() : {};
+    const packages = normalizePackages(existing);
+    const alreadyAdded = packages.some((item) => item.id === packageId || item.payment_intent_id === paymentIntentId);
+    const nextPackages = alreadyAdded
+      ? packages
+      : [
+        ...packages,
+        {
+          id: packageId,
+          plan_id: plan.planId,
+          ads_limit: plan.adsLimit,
+          ads_used: 0,
+          purchased_at: nowIso,
+          period_started_at: null,
+          period_ends_at: addDays(now, plan.publishWindowDays || 30).toISOString(),
+          payment_intent_id: paymentIntentId || null,
+        },
+      ];
+    const summary = summarizePackages(nextPackages);
+
+    transaction.set(planRef, {
+      email: normalizedEmail,
+      plan_id: summary.planId,
+      ads_limit: summary.adsLimit,
+      ads_used: summary.adsUsed,
+      period_started_at: summary.periodStartedAt,
+      period_ends_at: summary.periodEndsAt,
+      packages: nextPackages,
+      payment_intent_id: paymentIntentId || existing.payment_intent_id || null,
+      updated_at: nowIso,
+    }, { merge: true });
+  });
 }
 
 async function getPricingPlan(planId) {

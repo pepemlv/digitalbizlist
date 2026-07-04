@@ -207,8 +207,10 @@ export default function UserDashboardPage({ onNavigate }: Props) {
     ads_used: 0,
     period_started_at: null,
     period_ends_at: null,
+    packages: [],
   };
   const planDefinition = planSettings[effectivePlan.plan_id];
+  const paidPackages = effectivePlan.packages ?? [];
   const planUsedCount = effectivePlan.plan_id === 'free' ? activeListings.length : effectivePlan.ads_used;
   const adsRemaining = Math.max(0, effectivePlan.ads_limit - planUsedCount);
   const progressPercent = effectivePlan.ads_limit > 0 ? Math.min(100, Math.round((planUsedCount / effectivePlan.ads_limit) * 100)) : 0;
@@ -229,6 +231,15 @@ export default function UserDashboardPage({ onNavigate }: Props) {
     const createdAt = new Date(item.created_at).getTime();
     if (!Number.isFinite(createdAt)) return null;
     return Math.max(0, Math.ceil((createdAt + planDefinition.activeDays * 86400000 - Date.now()) / 86400000));
+  };
+
+  const formatDate = (dateValue: string | null | undefined) => {
+    if (!dateValue) return 'not set';
+    return new Date(dateValue).toLocaleDateString(undefined, {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+    });
   };
 
   const handleUpgrade = async (planId: 'starter' | 'business') => {
@@ -499,6 +510,27 @@ export default function UserDashboardPage({ onNavigate }: Props) {
         </div>
         <p className="mt-1 text-xs text-gray-500">{planUsedCount} of {effectivePlan.ads_limit} ads used</p>
       </div>
+      {paidPackages.length > 0 && (
+        <div className="border border-gray-200 bg-gray-50 p-3">
+          <p className="mb-2 text-xs font-semibold uppercase text-gray-500">Payment packages</p>
+          <div className="space-y-2">
+            {paidPackages.map((item, index) => {
+              const remaining = Math.max(0, item.ads_limit - item.ads_used);
+              const isNextPackage = remaining > 0 && paidPackages.findIndex((pkg) => pkg.ads_used < pkg.ads_limit) === index;
+              return (
+                <div key={item.id || `${item.plan_id}-${index}`} className="grid gap-1 border border-gray-200 bg-white p-2 text-xs sm:grid-cols-[1fr_auto_auto] sm:items-center">
+                  <p className="font-semibold text-gray-900">
+                    {planSettings[item.plan_id].name}
+                    {isNextPackage ? <span className="ml-2 text-[#00519b]">using now</span> : null}
+                  </p>
+                  <p className="text-gray-600">{remaining} of {item.ads_limit} ads left</p>
+                  <p className="text-gray-500">paid {formatDate(item.purchased_at)}</p>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
       {planMessage && <p className="text-xs text-[#cc0000]">{planMessage}</p>}
     </section>
   );

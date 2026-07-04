@@ -94,7 +94,19 @@ export interface UserPlan {
   period_started_at: string | null;
   period_ends_at: string | null;
   payment_intent_id?: string | null;
+  packages?: UserPlanPackage[];
   updated_at?: string | null;
+}
+
+export interface UserPlanPackage {
+  id: string;
+  plan_id: Exclude<PricingPlanId, 'free'>;
+  ads_limit: number;
+  ads_used: number;
+  purchased_at: string;
+  period_started_at: string | null;
+  period_ends_at: string | null;
+  payment_intent_id?: string | null;
 }
 
 export interface VehicleDetails {
@@ -267,6 +279,7 @@ function freeUserPlan(email: string): UserPlan {
     ads_used: 0,
     period_started_at: null,
     period_ends_at: null,
+    packages: [],
   };
 }
 
@@ -607,7 +620,71 @@ export async function createCityGroup(data: { state: string; cities: string[] })
   return { id };
 }
 
-export async function getUserPlan(email: string) {
+function packageFromLegacyPlan(data: Partial<UserPlan>): UserPlanPackage | null {
+  if (data.plan_id !== 'starter' && data.plan_id !== 'business') return null;
+  if (!data.ads_limit) return null;
+
+  return {
+    id: data.payment_intent_id || `legacy-${data.plan_id}`,
+    plan_id: data.plan_id,
+    ads_limit: Number(data.ads_limit) || pricingPlans[data.plan_id].adLimit,
+    ads_used: Number(data.ads_used) || 0,
+    purchased_at: data.period_started_at || data.updated_at || new Date().toISOString(),
+    period_started_at: data.period_started_at || null,
+    period_ends_at: data.period_ends_at || null,
+    payment_intent_id: data.payment_intent_id || null,
+  };
+}
+
+function isPaidPlanId(value: unknown): value is Exclude<PricingPlanId, 'free'> {
+  return value === 'starter' || value === 'business';
+}
+
+function normalizeUserPlanPackages(data: Partial<UserPlan>) {
+  if (Array.isArray(data.packages)) {
+    return data.packages
+      .filter((item): item is UserPlanPackage => isPaidPlanId(item?.plan_id))
+      .map((item) => {
+        const planId = item.plan_id;
+        return {
+          ...item,
+          plan_id: planId,
+          ads_limit: Number(item.ads_limit) || pricingPlans[planId].adLimit,
+          ads_used: Number(item.ads_used) || 0,
+          purchased_at: item.purchased_at || item.period_started_at || data.updated_at || new Date().toISOString(),
+          period_started_at: item.period_started_at || null,
+          period_ends_at: item.period_ends_at || null,
+          payment_intent_id: item.payment_intent_id || null,
+        };
+      });
+  }
+
+  const legacyPackage = packageFromLegacyPlan(data);
+  return legacyPackage ? [legacyPackage] : [];
+}
+
+function summarizeUserPlanPackages(packages: UserPlanPackage[]) {
+  const adsLimit = packages.reduce((total, item) => total + item.ads_limit, 0);
+  const adsUsed = packages.reduce((total, item) => total + item.ads_used, 0);
+  const periodEndsAt = packages
+    .map((item) => item.period_ends_at)
+    .filter((value): value is string => Boolean(value))
+    .sort();
+  const latestPeriodEnd = periodEndsAt.length > 0 ? periodEndsAt[periodEndsAt.length - 1] : null;
+  const periodStartedAt = packages.find((item) => item.period_started_at)?.period_started_at || null;
+  const activePackage = packages.find((item) => item.ads_used < item.ads_limit) || packages[packages.length - 1];
+  const planId: PricingPlanId = activePackage?.plan_id || 'free';
+
+  return {
+    planId,
+    adsLimit,
+    adsUsed,
+    periodStartedAt,
+    periodEndsAt: latestPeriodEnd,
+  };
+}
+
+export async function getUserPlan(email: string): Promise<UserPlan> {
   const normalizedEmail = email.trim().toLowerCase();
   if (!normalizedEmail) return freeUserPlan('');
 
@@ -615,15 +692,20 @@ export async function getUserPlan(email: string) {
   if (!planDoc.exists()) return freeUserPlan(normalizedEmail);
 
   const data = planDoc.data() as Partial<UserPlan>;
-  const planId = data.plan_id && pricingPlans[data.plan_id] ? data.plan_id : 'free';
+  const packages = normalizeUserPlanPackages(data);
+  const summary = summarizeUserPlanPackages(packages);
+  const planId = summary.planId && pricingPlans[summary.planId] ? summary.planId : 'free';
   return {
     ...freeUserPlan(normalizedEmail),
     ...data,
     id: planDoc.id,
     email: data.email || normalizedEmail,
     plan_id: planId,
-    ads_limit: data.ads_limit ?? pricingPlans[planId].adLimit,
-    ads_used: data.ads_used ?? 0,
+    ads_limit: packages.length > 0 ? summary.adsLimit : data.ads_limit ?? pricingPlans[planId].adLimit,
+    ads_used: packages.length > 0 ? summary.adsUsed : data.ads_used ?? 0,
+    period_started_at: packages.length > 0 ? summary.periodStartedAt : data.period_started_at ?? null,
+    period_ends_at: packages.length > 0 ? summary.periodEndsAt : data.period_ends_at ?? null,
+    packages,
   };
 }
 
@@ -745,18 +827,16 @@ export async function createListing(data: Omit<Listing, 'id' | 'created_at' | 'u
   });
 
   if (data.payment_plan_id && data.payment_plan_id !== 'free' && data.posted_by_email) {
-    await recordPaidPlanAdUse(data.posted_by_email, data.payment_plan_id);
+    await recordPaidPlanAdUse(data.posted_by_email);
   }
 
   return { id: listingDoc.id };
 }
 
-async function recordPaidPlanAdUse(email: string, planId: Exclude<PricingPlanId, 'free'>) {
+async function recordPaidPlanAdUse(email: string) {
   const normalizedEmail = email.trim().toLowerCase();
   if (!normalizedEmail) return;
 
-  const plans = await getPricingPlans();
-  const plan = plans[planId];
   const now = new Date();
   const nowIso = now.toISOString();
   const planDoc = doc(userPlansCollection, accountDocId(normalizedEmail));
@@ -766,17 +846,29 @@ async function recordPaidPlanAdUse(email: string, planId: Exclude<PricingPlanId,
     if (!snapshot.exists()) return;
 
     const data = snapshot.data() as Partial<UserPlan>;
-    const currentPlanId = data.plan_id === 'starter' || data.plan_id === 'business' ? data.plan_id : null;
-    if (currentPlanId !== planId) return;
+    const packages = normalizeUserPlanPackages(data);
+    const packageIndex = packages.findIndex((item) => item.ads_used < item.ads_limit);
+    if (packageIndex < 0) return;
 
-    const currentUsed = Number(data.ads_used ?? 0);
-    const startedAt = data.period_started_at || nowIso;
-    const endsAt = data.period_ends_at || addDays(now, plan.publishWindowDays ?? 30).toISOString();
+    const nextPackages = packages.map((item, index) => {
+      if (index !== packageIndex) return item;
+
+      return {
+        ...item,
+        ads_used: item.ads_used + 1,
+        period_started_at: item.period_started_at || nowIso,
+        period_ends_at: item.period_ends_at || addDays(now, pricingPlans[item.plan_id].publishWindowDays ?? 30).toISOString(),
+      };
+    });
+    const summary = summarizeUserPlanPackages(nextPackages);
 
     transaction.set(planDoc, {
-      ads_used: currentUsed + 1,
-      period_started_at: startedAt,
-      period_ends_at: endsAt,
+      plan_id: summary.planId,
+      ads_limit: summary.adsLimit,
+      ads_used: summary.adsUsed,
+      period_started_at: summary.periodStartedAt,
+      period_ends_at: summary.periodEndsAt,
+      packages: nextPackages,
       updated_at: nowIso,
     }, { merge: true });
   });
