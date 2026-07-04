@@ -55,6 +55,16 @@ if (!admin.apps.length) {
 
 const db = admin.apps.length ? admin.firestore() : null;
 
+function normalizeOrigin(value) {
+  return String(value || '').trim().replace(/\/+$/, '');
+}
+
+const allowedOrigins = new Set([
+  normalizeOrigin(process.env.FRONTEND_URL),
+  'https://digitalbizlist.com',
+  'https://www.digitalbizlist.com',
+].filter(Boolean));
+
 function accountDocId(email) {
   return email.trim().toLowerCase().replace(/[^a-z0-9._-]+/g, '_') || 'unknown';
 }
@@ -85,7 +95,14 @@ async function activatePlan({ email, planId, checkoutSessionId }) {
 }
 
 app.use(cors({
-  origin: process.env.FRONTEND_URL,
+  origin(origin, callback) {
+    if (!origin || allowedOrigins.has(normalizeOrigin(origin))) {
+      callback(null, true);
+      return;
+    }
+
+    callback(new Error(`Origin ${origin} is not allowed by CORS.`));
+  },
 }));
 
 app.get('/health', (_request, response) => {
