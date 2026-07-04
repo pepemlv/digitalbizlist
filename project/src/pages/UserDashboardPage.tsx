@@ -187,17 +187,14 @@ export default function UserDashboardPage({ onNavigate }: Props) {
   };
 
   const myListings = useMemo(() => {
-    if (!profile.email && !profile.phone && !profile.password) {
-      return [];
-    }
+    const profileEmail = profile.email.trim().toLowerCase();
+    if (!profileEmail) return [];
 
     return listings.filter((item) => {
-      const matchesEmail = profile.email && item.contact_email?.toLowerCase() === profile.email.toLowerCase();
-      const matchesPhone = profile.phone && item.contact_phone === profile.phone;
-      const matchesPassword = profile.password && item.posting_password === profile.password;
-      return matchesEmail || matchesPhone || matchesPassword;
+      const ownerEmail = (item.posted_by_email || item.contact_email || '').trim().toLowerCase();
+      return ownerEmail === profileEmail;
     });
-  }, [listings, profile]);
+  }, [listings, profile.email]);
 
   const myListingIds = useMemo(() => new Set(myListings.map((item) => item.id)), [myListings]);
   const myInquiries = useMemo(() => inquiries.filter((item) => myListingIds.has(item.listing_id)), [inquiries, myListingIds]);
