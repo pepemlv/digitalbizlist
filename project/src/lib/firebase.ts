@@ -92,7 +92,7 @@ export interface UserPlan {
   ads_used: number;
   period_started_at: string | null;
   period_ends_at: string | null;
-  checkout_session_id?: string | null;
+  payment_intent_id?: string | null;
   updated_at?: string | null;
 }
 
@@ -618,29 +618,42 @@ export async function getUserPlan(email: string) {
   };
 }
 
-export async function startStripeCheckout(planId: Exclude<PricingPlanId, 'free'>, email: string) {
-  const checkoutEndpoint = import.meta.env.VITE_STRIPE_CHECKOUT_ENDPOINT || 'https://digitalbizlist.onrender.com/api/stripe/create-checkout-session';
-  const response = await fetch(checkoutEndpoint, {
+const stripeBackendUrl = (import.meta.env.VITE_STRIPE_BACKEND_URL || 'https://digitalbizlist.onrender.com').replace(/\/+$/, '');
+
+export async function createPlanPaymentIntent(planId: Exclude<PricingPlanId, 'free'>, email: string) {
+  const response = await fetch(`${stripeBackendUrl}/api/stripe/create-payment-intent`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       planId,
       email: email.trim().toLowerCase(),
-      successUrl: `${window.location.origin}${window.location.pathname}?page=user&checkout=success`,
-      cancelUrl: `${window.location.origin}${window.location.pathname}?page=user&checkout=cancelled`,
     }),
   });
 
   if (!response.ok) {
-    throw new Error('Could not start Stripe checkout.');
+    throw new Error('Could not start payment.');
   }
 
-  const data = await response.json() as { url?: string };
-  if (!data.url) {
-    throw new Error('Stripe checkout did not return a redirect URL.');
+  const data = await response.json() as { clientSecret?: string; paymentIntentId?: string };
+  if (!data.clientSecret || !data.paymentIntentId) {
+    throw new Error('Stripe payment intent was not created.');
   }
 
-  window.location.href = data.url;
+  return data;
+}
+
+export async function confirmPlanPayment(paymentIntentId: string) {
+  const response = await fetch(`${stripeBackendUrl}/api/stripe/confirm-plan-payment`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ paymentIntentId }),
+  });
+
+  if (!response.ok) {
+    throw new Error('Could not activate plan after payment.');
+  }
+
+  return response.json() as Promise<{ ok: boolean; planId: PricingPlanId }>;
 }
 
 export async function createListing(data: Omit<Listing, 'id' | 'created_at' | 'updated_at' | 'is_active' | 'approval_status'> & { approval_status?: Listing['approval_status']; posted_by_email?: string | null; posted_by_phone?: string | null; posting_password?: string | null; }) {

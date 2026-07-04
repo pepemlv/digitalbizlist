@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
-import { CityGroup, createListing, getCities, getListings, getUserPlan, pricingPlans, startStripeCheckout, UserPlan, VehicleDetails } from '../lib/firebase';
+import { CityGroup, createListing, getCities, getListings, getUserPlan, pricingPlans, UserPlan, VehicleDetails } from '../lib/firebase';
 import { categoryGroups } from '../data/categories';
+import PlanPaymentForm from '../components/PlanPaymentForm';
 import {
   availabilityOptions,
   bodyStyles,
@@ -128,7 +129,7 @@ export default function PostAdPage({ onNavigate }: Props) {
   const [newListingId, setNewListingId] = useState('');
   const [accountPassword, setAccountPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
-  const [checkoutLoadingPlan, setCheckoutLoadingPlan] = useState<'starter' | 'business' | null>(null);
+  const [selectedPaymentPlan, setSelectedPaymentPlan] = useState<'starter' | 'business' | null>(null);
   const [currentUser, setCurrentUser] = useState<StoredUserProfile | null>(null);
   const [discoveredAccount, setDiscoveredAccount] = useState<StoredUserProfile | null>(null);
   const [cityGroups, setCityGroups] = useState<CityGroup[]>([]);
@@ -258,14 +259,8 @@ export default function PostAdPage({ onNavigate }: Props) {
       return;
     }
 
-    setCheckoutLoadingPlan(planId);
     setError('');
-    try {
-      await startStripeCheckout(planId, email);
-    } catch {
-      setError('Could not open Stripe checkout. Check that the backend Stripe endpoint is configured.');
-      setCheckoutLoadingPlan(null);
-    }
+    setSelectedPaymentPlan(planId);
   };
 
   useEffect(() => {
@@ -1025,10 +1020,9 @@ export default function PostAdPage({ onNavigate }: Props) {
                 <button
                   type="button"
                   onClick={() => handleUpgrade('starter')}
-                  disabled={checkoutLoadingPlan !== null}
                   className="mt-2 border border-[#00519b] bg-blue-50 px-2 py-1 text-xs font-semibold text-[#00519b] hover:bg-blue-100 disabled:opacity-50"
                 >
-                  {checkoutLoadingPlan === 'starter' ? 'opening...' : 'buy 5 ads'}
+                  buy 5 ads
                 </button>
               </div>
               <div className="border border-gray-200 bg-white p-2">
@@ -1037,14 +1031,24 @@ export default function PostAdPage({ onNavigate }: Props) {
                 <button
                   type="button"
                   onClick={() => handleUpgrade('business')}
-                  disabled={checkoutLoadingPlan !== null}
                   className="mt-2 border border-[#00519b] bg-blue-50 px-2 py-1 text-xs font-semibold text-[#00519b] hover:bg-blue-100 disabled:opacity-50"
                 >
-                  {checkoutLoadingPlan === 'business' ? 'opening...' : 'buy 15 ads'}
+                  buy 15 ads
                 </button>
               </div>
             </div>
           </div>
+          {selectedPaymentPlan && (
+            <PlanPaymentForm
+              planId={selectedPaymentPlan}
+              email={(form.contact_email.trim().toLowerCase() || currentUser?.email.trim().toLowerCase() || '')}
+              onCancel={() => setSelectedPaymentPlan(null)}
+              onSuccess={() => {
+                setSelectedPaymentPlan(null);
+                setError('Payment complete. Your plan is active. You can publish your listing now.');
+              }}
+            />
+          )}
           <div className="flex gap-3 pt-1">
             <button onClick={handleSubmit} disabled={submitting} className={`${btnPrimary} disabled:opacity-50`}>
               {submitting ? 'posting...' : 'publish listing'}

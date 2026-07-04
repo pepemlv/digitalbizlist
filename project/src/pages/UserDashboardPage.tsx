@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { deleteListing, getListingInquiries, getListings, getUserPlan, hideListing, Listing, ListingInquiry, pricingPlans, startStripeCheckout, updateListingDetails, updateListingSoldStatus, UserPlan } from '../lib/firebase';
+import { deleteListing, getListingInquiries, getListings, getUserPlan, hideListing, Listing, ListingInquiry, pricingPlans, updateListingDetails, updateListingSoldStatus, UserPlan } from '../lib/firebase';
+import PlanPaymentForm from '../components/PlanPaymentForm';
 
 type Page = 'home' | 'browse' | 'post' | 'listing' | 'user';
 
@@ -61,7 +62,7 @@ export default function UserDashboardPage({ onNavigate }: Props) {
   const [listingActionMessage, setListingActionMessage] = useState('');
   const [userPlan, setUserPlan] = useState<UserPlan | null>(null);
   const [planMessage, setPlanMessage] = useState('');
-  const [checkoutLoadingPlan, setCheckoutLoadingPlan] = useState<'starter' | 'business' | null>(null);
+  const [selectedPaymentPlan, setSelectedPaymentPlan] = useState<'starter' | 'business' | null>(null);
   const [messages] = useState<MessageItem[]>([
     {
       id: 1,
@@ -187,13 +188,16 @@ export default function UserDashboardPage({ onNavigate }: Props) {
       return;
     }
 
-    setCheckoutLoadingPlan(planId);
     setPlanMessage('');
-    try {
-      await startStripeCheckout(planId, email);
-    } catch {
-      setPlanMessage('Could not open Stripe checkout. Check that the backend Stripe endpoint is configured.');
-      setCheckoutLoadingPlan(null);
+    setSelectedPaymentPlan(planId);
+  };
+
+  const refreshPlanAfterPayment = async () => {
+    setSelectedPaymentPlan(null);
+    setPlanMessage('Payment complete. Your plan is active.');
+    if (profile.email.trim()) {
+      const plan = await getUserPlan(profile.email);
+      setUserPlan(plan);
     }
   };
 
@@ -354,18 +358,16 @@ export default function UserDashboardPage({ onNavigate }: Props) {
           <button
             type="button"
             onClick={() => handleUpgrade('starter')}
-            disabled={checkoutLoadingPlan !== null}
             className="border border-[#00519b] bg-blue-50 px-3 py-1.5 text-xs font-semibold text-[#00519b] hover:bg-blue-100 disabled:opacity-50"
           >
-            {checkoutLoadingPlan === 'starter' ? 'opening...' : 'Publish 5 Ads - $5'}
+            Publish 5 Ads - $5
           </button>
           <button
             type="button"
             onClick={() => handleUpgrade('business')}
-            disabled={checkoutLoadingPlan !== null}
             className="border border-[#00519b] bg-blue-50 px-3 py-1.5 text-xs font-semibold text-[#00519b] hover:bg-blue-100 disabled:opacity-50"
           >
-            {checkoutLoadingPlan === 'business' ? 'opening...' : 'Publish 15 Ads - $10'}
+            Publish 15 Ads - $10
           </button>
         </div>
       </div>
@@ -627,7 +629,7 @@ export default function UserDashboardPage({ onNavigate }: Props) {
         <div>
           <p className="text-xs font-semibold uppercase text-gray-500">DigitalBizList Pricing</p>
           <h2 className="text-lg font-semibold text-gray-900">Choose a posting plan</h2>
-          <p className="text-sm text-gray-600">Use Stripe checkout to activate Starter or Business on your dashboard email.</p>
+          <p className="text-sm text-gray-600">Pay securely on this page to activate Starter or Business on your dashboard email.</p>
         </div>
         <button onClick={() => setActiveSection('announcements')} className="text-sm text-[#00519b] hover:underline">
           back to dashboard
@@ -665,10 +667,9 @@ export default function UserDashboardPage({ onNavigate }: Props) {
           <button
             type="button"
             onClick={() => handleUpgrade('starter')}
-            disabled={checkoutLoadingPlan !== null}
             className="mt-4 w-full border border-[#00519b] bg-[#00519b] px-3 py-2 text-sm font-semibold text-white hover:bg-blue-800 disabled:opacity-50"
           >
-            {checkoutLoadingPlan === 'starter' ? 'opening Stripe...' : 'pay $5'}
+            pay $5
           </button>
         </div>
 
@@ -686,17 +687,25 @@ export default function UserDashboardPage({ onNavigate }: Props) {
           <button
             type="button"
             onClick={() => handleUpgrade('business')}
-            disabled={checkoutLoadingPlan !== null}
             className="mt-4 w-full border border-gray-900 bg-gray-900 px-3 py-2 text-sm font-semibold text-white hover:bg-gray-700 disabled:opacity-50"
           >
-            {checkoutLoadingPlan === 'business' ? 'opening Stripe...' : 'pay $10'}
+            pay $10
           </button>
         </div>
       </div>
 
+      {selectedPaymentPlan && (
+        <PlanPaymentForm
+          planId={selectedPaymentPlan}
+          email={profile.email.trim().toLowerCase()}
+          onCancel={() => setSelectedPaymentPlan(null)}
+          onSuccess={refreshPlanAfterPayment}
+        />
+      )}
+
       <div className="border border-gray-200 bg-gray-50 p-3 text-sm text-gray-600">
         <p className="font-semibold text-gray-800">After payment</p>
-        <p className="mt-1">Stripe redirects back to your dashboard. The backend should update your Firestore `userPlans` record from the Stripe webhook.</p>
+        <p className="mt-1">Your card is processed by Stripe inside this page. The backend activates your plan after payment succeeds.</p>
       </div>
       {planMessage && <p className="text-xs text-[#cc0000]">{planMessage}</p>}
     </section>

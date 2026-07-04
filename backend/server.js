@@ -25,7 +25,6 @@ const pricingPlans = {
     adsLimit: 5,
     publishWindowDays: null,
     activeDays: 60,
-    priceEnv: 'STRIPE_STARTER_PRICE_ID',
   },
   business: {
     planId: 'business',
@@ -34,7 +33,6 @@ const pricingPlans = {
     adsLimit: 15,
     publishWindowDays: 30,
     activeDays: 60,
-    priceEnv: 'STRIPE_BUSINESS_PRICE_ID',
   },
 };
 
@@ -73,7 +71,7 @@ function addDays(date, days) {
   return new Date(date.getTime() + days * 24 * 60 * 60 * 1000);
 }
 
-async function activatePlan({ email, planId, checkoutSessionId }) {
+async function activatePlan({ email, planId, paymentIntentId }) {
   if (!db) throw new Error('Firebase Admin is not initialized.');
   const plan = pricingPlans[planId];
   if (!plan) throw new Error(`Unknown plan: ${planId}`);
@@ -89,7 +87,7 @@ async function activatePlan({ email, planId, checkoutSessionId }) {
     ads_used: 0,
     period_started_at: now.toISOString(),
     period_ends_at: periodEndsAt,
-    checkout_session_id: checkoutSessionId || null,
+    payment_intent_id: paymentIntentId || null,
     updated_at: now.toISOString(),
   }, { merge: true });
 }
@@ -109,6 +107,14 @@ app.get('/health', (_request, response) => {
   response.json({ ok: true, service: 'digitalbizlist-backend' });
 });
 
+app.get('/', (_request, response) => {
+  response.json({
+    ok: true,
+    service: 'digitalbizlist-backend',
+    payments: 'payment-intents',
+  });
+});
+
 app.post('/api/stripe/webhook', express.raw({ type: 'application/json' }), async (request, response) => {
   if (!stripe) return response.status(500).send('Stripe is not configured.');
 
@@ -125,16 +131,16 @@ app.post('/api/stripe/webhook', express.raw({ type: 'application/json' }), async
   }
 
   try {
-    if (event.type === 'checkout.session.completed') {
-      const session = event.data.object;
-      const email = session.metadata?.email || session.customer_details?.email;
-      const planId = session.metadata?.planId;
+    if (event.type === 'payment_intent.succeeded') {
+      const paymentIntent = event.data.object;
+      const email = paymentIntent.metadata?.email;
+      const planId = paymentIntent.metadata?.planId;
 
       if (email && planId) {
         await activatePlan({
           email,
           planId,
-          checkoutSessionId: session.id,
+          paymentIntentId: paymentIntent.id,
         });
       }
     }
@@ -147,10 +153,10 @@ app.post('/api/stripe/webhook', express.raw({ type: 'application/json' }), async
 
 app.use(express.json());
 
-app.post('/api/stripe/create-checkout-session', async (request, response) => {
+app.post('/api/stripe/create-payment-intent', async (request, response) => {
   if (!stripe) return response.status(500).json({ error: 'Stripe is not configured.' });
 
-  const { planId, email, successUrl, cancelUrl } = request.body || {};
+  const { planId, email } = request.body || {};
   const plan = pricingPlans[planId];
   const normalizedEmail = String(email || '').trim().toLowerCase();
 
@@ -158,34 +164,52 @@ app.post('/api/stripe/create-checkout-session', async (request, response) => {
   if (!normalizedEmail) return response.status(400).json({ error: 'Email is required.' });
 
   try {
-    const configuredPriceId = process.env[plan.priceEnv];
-    const session = await stripe.checkout.sessions.create({
-      mode: 'payment',
-      customer_email: normalizedEmail,
-      success_url: successUrl || `${process.env.FRONTEND_URL}?page=user&checkout=success`,
-      cancel_url: cancelUrl || `${process.env.FRONTEND_URL}?page=user&checkout=cancelled`,
+    const paymentIntent = await stripe.paymentIntents.create({
+      amount: plan.amount,
+      currency: 'usd',
+      receipt_email: normalizedEmail,
+      automatic_payment_methods: {
+        enabled: true,
+      },
       metadata: {
         email: normalizedEmail,
         planId: plan.planId,
       },
-      line_items: [
-        configuredPriceId
-          ? { price: configuredPriceId, quantity: 1 }
-          : {
-              quantity: 1,
-              price_data: {
-                currency: 'usd',
-                unit_amount: plan.amount,
-                product_data: {
-                  name: `DigitalBizList ${plan.name}`,
-                  description: `${plan.adsLimit} ads, each active for ${plan.activeDays} days`,
-                },
-              },
-            },
-      ],
+      description: `DigitalBizList ${plan.name}`,
     });
 
-    response.json({ url: session.url });
+    response.json({
+      clientSecret: paymentIntent.client_secret,
+      paymentIntentId: paymentIntent.id,
+    });
+  } catch (error) {
+    response.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/stripe/confirm-plan-payment', async (request, response) => {
+  if (!stripe) return response.status(500).json({ error: 'Stripe is not configured.' });
+
+  const { paymentIntentId } = request.body || {};
+  if (!paymentIntentId) return response.status(400).json({ error: 'Payment intent is required.' });
+
+  try {
+    const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
+    if (paymentIntent.status !== 'succeeded') {
+      return response.status(400).json({ error: 'Payment is not complete.' });
+    }
+
+    const email = paymentIntent.metadata?.email;
+    const planId = paymentIntent.metadata?.planId;
+    if (!email || !planId) return response.status(400).json({ error: 'Payment metadata is missing.' });
+
+    await activatePlan({
+      email,
+      planId,
+      paymentIntentId: paymentIntent.id,
+    });
+
+    response.json({ ok: true, planId });
   } catch (error) {
     response.status(500).json({ error: error.message });
   }

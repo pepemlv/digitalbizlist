@@ -3,7 +3,7 @@
 DigitalBizList has two deployable parts:
 
 - `project/` - Vite React frontend
-- `backend/` - Render-ready Node/Express backend for Stripe checkout and Stripe webhooks
+- `backend/` - Render-ready Node/Express backend for Stripe PaymentIntents and webhooks
 
 ## GitHub Repo
 
@@ -32,8 +32,6 @@ Set these in Render:
 FRONTEND_URL=https://digitalbizlist.com
 STRIPE_SECRET_KEY=sk_live_or_test_xxx
 STRIPE_WEBHOOK_SECRET=whsec_xxx
-STRIPE_STARTER_PRICE_ID=price_xxx
-STRIPE_BUSINESS_PRICE_ID=price_xxx
 FIREBASE_SERVICE_ACCOUNT={"type":"service_account", "...": "..."}
 ```
 
@@ -50,7 +48,7 @@ https://your-render-backend.onrender.com/api/stripe/webhook
 Listen for:
 
 ```text
-checkout.session.completed
+payment_intent.succeeded
 ```
 
 When payment succeeds, the backend writes/updates this Firestore document:
@@ -61,12 +59,13 @@ userPlans/{email-doc-id}
 
 The frontend dashboard reads that document to show the active plan.
 
-## Frontend Environment Variable
+## Frontend Environment Variables
 
 In the frontend hosting provider, set:
 
 ```env
-VITE_STRIPE_CHECKOUT_ENDPOINT=https://digitalbizlist.onrender.com/api/stripe/create-checkout-session
+VITE_STRIPE_BACKEND_URL=https://digitalbizlist.onrender.com
+VITE_STRIPE_PUBLISHABLE_KEY=pk_live_or_test_xxx
 ```
 
 Local frontend app is in `project/`.

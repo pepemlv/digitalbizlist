@@ -15,9 +15,5 @@ services:
         sync: false
       - key: STRIPE_WEBHOOK_SECRET
         sync: false
-      - key: STRIPE_STARTER_PRICE_ID
-        sync: false
-      - key: STRIPE_BUSINESS_PRICE_ID
-        sync: false
       - key: FIREBASE_SERVICE_ACCOUNT
         sync: false
